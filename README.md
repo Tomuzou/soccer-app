@@ -2,6 +2,12 @@
 
 ブラウザで遊べる3Dフリーキックゲームです。
 
+## 🎮 今すぐプレイ
+
+**[https://tomuzou.github.io/soccer-app/](https://tomuzou.github.io/soccer-app/)**
+
+インストール不要。PC・スマホのブラウザからそのまま遊べます。
+
 ## 概要
 
 Three.jsを使って3D空間でフリーキックを蹴るゲームアプリです。
