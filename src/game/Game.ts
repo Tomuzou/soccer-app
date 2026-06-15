@@ -1,0 +1,424 @@
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+import type { GameCallbacks, GamePhase, GameState, ShotResult } from '../types';
+
+// --- ゲーム定数（単位はメートル） ---
+const GOAL_WIDTH = 7.32; // 実寸のゴール幅
+const GOAL_HEIGHT = 2.44; // 実寸のゴール高さ
+const GOAL_Z = -18; // ゴールラインの位置（ボールからの距離 = 約18m）
+const POST_RADIUS = 0.06;
+const BALL_RADIUS = 0.15;
+const BALL_MASS = 0.45;
+
+const MIN_SPEED = 16; // パワー0のときの初速
+const MAX_SPEED = 30; // パワー1のときの初速
+const MAX_YAW = THREE.MathUtils.degToRad(30); // 左右の最大振り角
+const BASE_PITCH = THREE.MathUtils.degToRad(8); // 最低仰角
+const MAX_PITCH = THREE.MathUtils.degToRad(40); // 最大仰角
+
+/**
+ * Three.js のシーン描画と Cannon-es の物理シミュレーションを管理するクラス。
+ * React のレンダリングとは独立して requestAnimationFrame ループで駆動する。
+ */
+export class Game {
+  private container: HTMLElement;
+  private callbacks: GameCallbacks;
+
+  private renderer: THREE.WebGLRenderer;
+  private scene: THREE.Scene;
+  private camera: THREE.PerspectiveCamera;
+  private world: CANNON.World;
+
+  private ballMesh!: THREE.Mesh;
+  private ballBody!: CANNON.Body;
+  private aimArrow!: THREE.ArrowHelper;
+
+  private resizeObserver: ResizeObserver;
+  private animationId = 0;
+  private clock = new THREE.Clock();
+
+  // 照準・入力状態
+  private aimX = 0; // -1〜1（左右）
+  private aimY = 0.4; // 0〜1（仰角）
+  private charging = false;
+  private prevBallZ = 0;
+  private resultTimer = 0;
+
+  // UI へ反映する状態
+  private state: GameState = {
+    phase: 'aiming',
+    score: 0,
+    attempts: 0,
+    lastResult: null,
+    power: 0,
+  };
+
+  constructor(container: HTMLElement, callbacks: GameCallbacks) {
+    this.container = container;
+    this.callbacks = callbacks;
+
+    // --- レンダラー ---
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.setSize(container.clientWidth, container.clientHeight);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(this.renderer.domElement);
+
+    // --- シーン・カメラ ---
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x87ceeb);
+    this.scene.fog = new THREE.Fog(0x87ceeb, 30, 60);
+
+    this.camera = new THREE.PerspectiveCamera(
+      55,
+      container.clientWidth / container.clientHeight,
+      0.1,
+      200,
+    );
+    this.camera.position.set(0, 2.2, 6);
+    this.camera.lookAt(0, 1, GOAL_Z);
+
+    // --- 物理ワールド ---
+    this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
+
+    this.setupLights();
+    this.setupGround();
+    this.setupGoal();
+    this.setupBall();
+    this.setupAimArrow();
+
+    // --- イベント登録 ---
+    this.resizeObserver = new ResizeObserver(() => this.onResize());
+    this.resizeObserver.observe(container);
+    this.bindInput();
+
+    this.emitState();
+    this.clock.start();
+    this.animate();
+  }
+
+  // ---------------------------------------------------------------------------
+  // セットアップ
+  // ---------------------------------------------------------------------------
+
+  private setupLights(): void {
+    const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+    this.scene.add(ambient);
+
+    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+    sun.position.set(-8, 15, 6);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -20;
+    sun.shadow.camera.right = 20;
+    sun.shadow.camera.top = 20;
+    sun.shadow.camera.bottom = -20;
+    sun.shadow.camera.far = 60;
+    this.scene.add(sun);
+  }
+
+  private setupGround(): void {
+    const geo = new THREE.PlaneGeometry(60, 80);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x2e8b2e });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.receiveShadow = true;
+    this.scene.add(mesh);
+
+    // 簡易のサイドライン的なグリッド
+    const grid = new THREE.GridHelper(60, 30, 0x55aa55, 0x55aa55);
+    (grid.material as THREE.Material).opacity = 0.25;
+    (grid.material as THREE.Material).transparent = true;
+    this.scene.add(grid);
+
+    const groundBody = new CANNON.Body({
+      mass: 0,
+      shape: new CANNON.Plane(),
+    });
+    groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    this.world.addBody(groundBody);
+  }
+
+  private setupGoal(): void {
+    const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+    const halfW = GOAL_WIDTH / 2;
+
+    const makePost = (x: number) => {
+      const geo = new THREE.CylinderGeometry(
+        POST_RADIUS,
+        POST_RADIUS,
+        GOAL_HEIGHT,
+      );
+      const mesh = new THREE.Mesh(geo, postMat);
+      mesh.position.set(x, GOAL_HEIGHT / 2, GOAL_Z);
+      mesh.castShadow = true;
+      this.scene.add(mesh);
+
+      const body = new CANNON.Body({
+        mass: 0,
+        shape: new CANNON.Cylinder(POST_RADIUS, POST_RADIUS, GOAL_HEIGHT, 8),
+      });
+      body.position.set(x, GOAL_HEIGHT / 2, GOAL_Z);
+      this.world.addBody(body);
+    };
+
+    makePost(-halfW);
+    makePost(halfW);
+
+    // クロスバー
+    const barGeo = new THREE.CylinderGeometry(
+      POST_RADIUS,
+      POST_RADIUS,
+      GOAL_WIDTH + POST_RADIUS * 2,
+    );
+    const bar = new THREE.Mesh(barGeo, postMat);
+    bar.rotation.z = Math.PI / 2;
+    bar.position.set(0, GOAL_HEIGHT, GOAL_Z);
+    bar.castShadow = true;
+    this.scene.add(bar);
+
+    const barBody = new CANNON.Body({
+      mass: 0,
+      shape: new CANNON.Cylinder(
+        POST_RADIUS,
+        POST_RADIUS,
+        GOAL_WIDTH + POST_RADIUS * 2,
+        8,
+      ),
+    });
+    barBody.quaternion.setFromEuler(0, 0, Math.PI / 2);
+    barBody.position.set(0, GOAL_HEIGHT, GOAL_Z);
+    this.world.addBody(barBody);
+
+    // 簡易ネット（見た目だけ）
+    const netMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.15,
+      side: THREE.DoubleSide,
+    });
+    const backNet = new THREE.Mesh(
+      new THREE.PlaneGeometry(GOAL_WIDTH, GOAL_HEIGHT),
+      netMat,
+    );
+    backNet.position.set(0, GOAL_HEIGHT / 2, GOAL_Z - 1.2);
+    this.scene.add(backNet);
+  }
+
+  private setupBall(): void {
+    const geo = new THREE.SphereGeometry(BALL_RADIUS, 32, 32);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.4,
+    });
+    this.ballMesh = new THREE.Mesh(geo, mat);
+    this.ballMesh.castShadow = true;
+    this.scene.add(this.ballMesh);
+
+    this.ballBody = new CANNON.Body({
+      mass: BALL_MASS,
+      shape: new CANNON.Sphere(BALL_RADIUS),
+      linearDamping: 0.2,
+      angularDamping: 0.2,
+    });
+    this.world.addBody(this.ballBody);
+
+    this.resetBall();
+  }
+
+  private setupAimArrow(): void {
+    this.aimArrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0, 0, -1),
+      new THREE.Vector3(0, BALL_RADIUS, 0),
+      3,
+      0xffdd00,
+      0.6,
+      0.35,
+    );
+    this.scene.add(this.aimArrow);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 入力
+  // ---------------------------------------------------------------------------
+
+  private bindInput(): void {
+    const dom = this.renderer.domElement;
+    dom.addEventListener('pointermove', this.onPointerMove);
+    dom.addEventListener('pointerdown', this.onPointerDown);
+    window.addEventListener('pointerup', this.onPointerUp);
+  }
+
+  private onPointerMove = (e: PointerEvent): void => {
+    if (this.state.phase !== 'aiming') return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const nx = (e.clientX - rect.left) / rect.width; // 0〜1
+    const ny = (e.clientY - rect.top) / rect.height; // 0〜1
+    this.aimX = THREE.MathUtils.clamp((nx - 0.5) * 2, -1, 1);
+    this.aimY = THREE.MathUtils.clamp(1 - ny, 0, 1); // 上にいくほど大きく
+    this.updateAimArrow();
+  };
+
+  private onPointerDown = (): void => {
+    if (this.state.phase !== 'aiming') return;
+    this.charging = true;
+  };
+
+  private onPointerUp = (): void => {
+    if (!this.charging) return;
+    this.charging = false;
+    if (this.state.phase === 'aiming') this.shoot();
+  };
+
+  // ---------------------------------------------------------------------------
+  // ゲームロジック
+  // ---------------------------------------------------------------------------
+
+  /** 現在の照準から打ち出し方向の単位ベクトルを求める */
+  private aimDirection(): THREE.Vector3 {
+    const yaw = this.aimX * MAX_YAW;
+    const pitch = BASE_PITCH + this.aimY * (MAX_PITCH - BASE_PITCH);
+    return new THREE.Vector3(
+      Math.sin(yaw) * Math.cos(pitch),
+      Math.sin(pitch),
+      -Math.cos(yaw) * Math.cos(pitch),
+    ).normalize();
+  }
+
+  private updateAimArrow(): void {
+    const dir = this.aimDirection();
+    this.aimArrow.setDirection(dir);
+    this.aimArrow.position.copy(this.ballMesh.position);
+  }
+
+  private shoot(): void {
+    const dir = this.aimDirection();
+    const speed = MIN_SPEED + this.state.power * (MAX_SPEED - MIN_SPEED);
+    this.ballBody.velocity.set(dir.x * speed, dir.y * speed, dir.z * speed);
+    // 軽い回転を与えて転がりを自然に
+    this.ballBody.angularVelocity.set(-dir.z * 10, 0, dir.x * 10);
+
+    this.prevBallZ = this.ballBody.position.z;
+    this.aimArrow.visible = false;
+    this.setPhase('shooting');
+  }
+
+  private resetBall(): void {
+    this.ballBody.velocity.setZero();
+    this.ballBody.angularVelocity.setZero();
+    this.ballBody.position.set(0, BALL_RADIUS, 0);
+    this.ballBody.quaternion.set(0, 0, 0, 1);
+    this.ballMesh.position.set(0, BALL_RADIUS, 0);
+    this.prevBallZ = 0;
+  }
+
+  /** ゴールラインを跨いだ瞬間に枠内かどうか判定する */
+  private checkGoalCrossing(): void {
+    const z = this.ballBody.position.z;
+    if (this.prevBallZ > GOAL_Z && z <= GOAL_Z) {
+      const x = this.ballBody.position.x;
+      const y = this.ballBody.position.y;
+      const inside =
+        Math.abs(x) < GOAL_WIDTH / 2 && y > 0 && y < GOAL_HEIGHT;
+      this.finishShot(inside ? 'goal' : 'miss');
+    }
+    this.prevBallZ = z;
+  }
+
+  private finishShot(result: ShotResult): void {
+    if (this.state.phase !== 'shooting') return;
+    this.state.attempts += 1;
+    if (result === 'goal') this.state.score += 1;
+    this.state.lastResult = result;
+    this.resultTimer = result === 'goal' ? 2.0 : 1.5;
+    this.setPhase('result');
+  }
+
+  private setPhase(phase: GamePhase): void {
+    this.state.phase = phase;
+    this.emitState();
+  }
+
+  private emitState(): void {
+    this.callbacks.onStateChange({ ...this.state });
+  }
+
+  // ---------------------------------------------------------------------------
+  // メインループ
+  // ---------------------------------------------------------------------------
+
+  private animate = (): void => {
+    this.animationId = requestAnimationFrame(this.animate);
+    const dt = Math.min(this.clock.getDelta(), 1 / 30);
+
+    // パワーチャージ（押している間 0→1）
+    if (this.charging && this.state.phase === 'aiming') {
+      this.state.power = Math.min(this.state.power + dt * 0.8, 1);
+      this.emitState();
+    }
+
+    // 物理ステップ
+    this.world.step(1 / 60, dt, 3);
+
+    // メッシュへ反映
+    this.ballMesh.position.copy(this.ballBody.position as unknown as THREE.Vector3);
+    this.ballMesh.quaternion.copy(
+      this.ballBody.quaternion as unknown as THREE.Quaternion,
+    );
+
+    if (this.state.phase === 'shooting') {
+      this.checkGoalCrossing();
+      // 枠を大きく外れた／止まった場合のミス判定
+      const v = this.ballBody.velocity.length();
+      const outOfBounds =
+        this.ballBody.position.z < GOAL_Z - 3 ||
+        Math.abs(this.ballBody.position.x) > 25;
+      if (outOfBounds || (v < 0.3 && this.ballBody.position.z < -1)) {
+        this.finishShot('miss');
+      }
+    }
+
+    if (this.state.phase === 'result') {
+      this.resultTimer -= dt;
+      if (this.resultTimer <= 0) {
+        this.resetForNextShot();
+      }
+    }
+
+    this.renderer.render(this.scene, this.camera);
+  };
+
+  private resetForNextShot(): void {
+    this.resetBall();
+    this.state.power = 0;
+    this.state.lastResult = null;
+    this.aimArrow.visible = true;
+    this.updateAimArrow();
+    this.setPhase('aiming');
+  }
+
+  // ---------------------------------------------------------------------------
+  // その他
+  // ---------------------------------------------------------------------------
+
+  private onResize(): void {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(w, h);
+  }
+
+  /** クリーンアップ。React の useEffect の戻り値で呼ぶ。 */
+  dispose(): void {
+    cancelAnimationFrame(this.animationId);
+    this.resizeObserver.disconnect();
+    const dom = this.renderer.domElement;
+    dom.removeEventListener('pointermove', this.onPointerMove);
+    dom.removeEventListener('pointerdown', this.onPointerDown);
+    window.removeEventListener('pointerup', this.onPointerUp);
+    this.renderer.dispose();
+    if (dom.parentElement) dom.parentElement.removeChild(dom);
+  }
+}
