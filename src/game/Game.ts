@@ -16,6 +16,10 @@ const MAX_YAW = THREE.MathUtils.degToRad(30); // 左右の最大振り角
 const BASE_PITCH = THREE.MathUtils.degToRad(8); // 最低仰角
 const MAX_PITCH = THREE.MathUtils.degToRad(40); // 最大仰角
 
+const MAX_CURVE_SPIN = 38; // カーブ時の最大スピン（rad/s）
+const MAGNUS_COEF = 0.0042; // マグヌス力の係数（曲がり具合）
+const CURVE_GAIN = 2.6; // ドラッグの弧 → カーブ量の感度
+
 /**
  * Three.js のシーン描画と Cannon-es の物理シミュレーションを管理するクラス。
  * React のレンダリングとは独立して requestAnimationFrame ループで駆動する。
@@ -43,6 +47,7 @@ export class Game {
   private dragging = false;
   private dragStartX = 0;
   private dragStartY = 0;
+  private dragPath: { x: number; y: number }[] = [];
   private prevBallZ = 0;
   private resultTimer = 0;
 
@@ -53,6 +58,7 @@ export class Game {
     attempts: 0,
     lastResult: null,
     power: 0,
+    curve: 0,
   };
 
   constructor(container: HTMLElement, callbacks: GameCallbacks) {
@@ -212,7 +218,7 @@ export class Game {
   private setupBall(): void {
     const geo = new THREE.SphereGeometry(BALL_RADIUS, 32, 32);
     const mat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
+      map: this.makeBallTexture(),
       roughness: 0.4,
     });
     this.ballMesh = new THREE.Mesh(geo, mat);
@@ -228,6 +234,30 @@ export class Game {
     this.world.addBody(this.ballBody);
 
     this.resetBall();
+  }
+
+  /** 回転が見えるよう、白地に黒い斑点を描いたテクスチャを生成する */
+  private makeBallTexture(): THREE.CanvasTexture {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = '#222222';
+    const spots: [number, number, number][] = [
+      [30, 30, 16],
+      [96, 38, 13],
+      [64, 74, 18],
+      [22, 92, 12],
+      [108, 100, 14],
+    ];
+    for (const [x, y, r] of spots) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return new THREE.CanvasTexture(canvas);
   }
 
   private setupAimArrow(): void {
@@ -262,7 +292,9 @@ export class Game {
     this.dragging = true;
     this.dragStartX = e.clientX;
     this.dragStartY = e.clientY;
+    this.dragPath = [{ x: e.clientX, y: e.clientY }];
     this.state.power = 0;
+    this.state.curve = 0;
     // 画面外に指が出ても追従できるようにポインタを捕捉
     this.renderer.domElement.setPointerCapture(e.pointerId);
   };
@@ -274,6 +306,7 @@ export class Game {
     const maxDrag = Math.min(rect.width, rect.height) * 0.35;
     const dx = e.clientX - this.dragStartX;
     const dy = e.clientY - this.dragStartY; // 手前（下）に引くと正
+    this.dragPath.push({ x: e.clientX, y: e.clientY });
     this.aimX = THREE.MathUtils.clamp(-dx / maxDrag, -1, 1);
     this.aimY = THREE.MathUtils.clamp(dy / maxDrag, 0, 1); // 手前に引くほど高く
     this.state.power = THREE.MathUtils.clamp(
@@ -281,6 +314,7 @@ export class Game {
       0,
       1,
     );
+    this.state.curve = this.computeCurve(maxDrag);
     this.updateAimArrow();
     this.emitState();
   };
@@ -295,6 +329,7 @@ export class Game {
     if (this.state.phase !== 'aiming') return;
     if (this.state.power < 0.08) {
       this.state.power = 0;
+      this.state.curve = 0;
       this.emitState();
       return;
     }
@@ -304,6 +339,28 @@ export class Game {
   // ---------------------------------------------------------------------------
   // ゲームロジック
   // ---------------------------------------------------------------------------
+
+  /** ドラッグ経路の弧（直線からの符号付き偏差）からカーブ量を求める */
+  private computeCurve(maxDrag: number): number {
+    const pts = this.dragPath;
+    if (pts.length < 3) return 0;
+    const p0 = pts[0];
+    const pn = pts[pts.length - 1];
+    const baseX = pn.x - p0.x;
+    const baseY = pn.y - p0.y;
+    const baseLen = Math.hypot(baseX, baseY);
+    if (baseLen < 1) return 0;
+    let sum = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const vx = pts[i].x - p0.x;
+      const vy = pts[i].y - p0.y;
+      // 始点→終点を結ぶ直線に対する符号付き垂直距離
+      sum += (baseX * vy - baseY * vx) / baseLen;
+    }
+    const avg = sum / (pts.length - 2);
+    // 描いた弧の向きへ曲がるように符号を反転する
+    return THREE.MathUtils.clamp((-avg / maxDrag) * CURVE_GAIN, -1, 1);
+  }
 
   /** 現在の照準から打ち出し方向の単位ベクトルを求める */
   private aimDirection(): THREE.Vector3 {
@@ -326,8 +383,9 @@ export class Game {
     const dir = this.aimDirection();
     const speed = MIN_SPEED + this.state.power * (MAX_SPEED - MIN_SPEED);
     this.ballBody.velocity.set(dir.x * speed, dir.y * speed, dir.z * speed);
-    // 軽い回転を与えて転がりを自然に
-    this.ballBody.angularVelocity.set(-dir.z * 10, 0, dir.x * 10);
+    // カーブ量を縦軸のサイドスピンに変換（+転がり用の回転も少し）
+    const spin = this.state.curve * MAX_CURVE_SPIN;
+    this.ballBody.angularVelocity.set(-dir.z * 8, spin, dir.x * 8);
 
     this.prevBallZ = this.ballBody.position.z;
     this.aimArrow.visible = false;
@@ -382,6 +440,15 @@ export class Game {
     this.animationId = requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 1 / 30);
 
+    // 飛行中はマグヌス力（F = k * ω × v）で軌道を曲げる。
+    // 力は物理ステップ前に加える（cannon-es はステップ後に力をクリアする）。
+    if (this.state.phase === 'shooting') {
+      const magnus = new CANNON.Vec3();
+      this.ballBody.angularVelocity.cross(this.ballBody.velocity, magnus);
+      magnus.scale(MAGNUS_COEF, magnus);
+      this.ballBody.applyForce(magnus);
+    }
+
     // 物理ステップ
     this.world.step(1 / 60, dt, 3);
 
@@ -416,6 +483,7 @@ export class Game {
   private resetForNextShot(): void {
     this.resetBall();
     this.state.power = 0;
+    this.state.curve = 0;
     this.state.lastResult = null;
     this.aimArrow.visible = true;
     this.updateAimArrow();

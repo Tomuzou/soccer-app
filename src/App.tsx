@@ -9,6 +9,7 @@ const INITIAL_STATE: GameState = {
   attempts: 0,
   lastResult: null,
   power: 0,
+  curve: 0,
 };
 
 export default function App() {
@@ -42,6 +43,18 @@ export default function App() {
             style={{ width: `${state.power * 100}%` }}
           />
         </div>
+
+        <div className="curve-label">CURVE</div>
+        <div className="curve-bar">
+          <div className="curve-center" />
+          <div
+            className="curve-fill"
+            style={{
+              left: state.curve >= 0 ? '50%' : `${50 + state.curve * 50}%`,
+              width: `${Math.abs(state.curve) * 50}%`,
+            }}
+          />
+        </div>
       </div>
 
       {state.lastResult && (
@@ -56,7 +69,7 @@ export default function App() {
 
       <div className="instructions">
         <p>👆 ボールを手前にドラッグして狙う（強く引くほどパワーUP）</p>
-        <p>離すとシュート！ 左右にずらすとコースが変わる</p>
+        <p>🍌 引くときに弧を描くとカーブ！ 離すとシュート</p>
       </div>
     </div>
   );

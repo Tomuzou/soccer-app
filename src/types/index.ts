@@ -18,4 +18,6 @@ export interface GameState {
   lastResult: ShotResult;
   /** 0〜1 のシュートパワー（チャージ中の表示用） */
   power: number;
+  /** -1（左カーブ）〜1（右カーブ） */
+  curve: number;
 }

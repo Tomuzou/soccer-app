@@ -74,6 +74,42 @@
   transition: width 0.05s linear;
 }
 
+/* カーブメーター（中央を0として左右に伸びる） */
+.curve-label {
+  color: #fff;
+  font-size: 12px;
+  letter-spacing: 2px;
+  margin: 8px 0 4px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.curve-bar {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.curve-center {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.5);
+  transform: translateX(-50%);
+}
+
+.curve-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: #38bdf8;
+}
+
 /* 結果バナー */
 .result-banner {
   position: absolute;
