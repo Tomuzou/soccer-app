@@ -14,8 +14,8 @@
 /* HUD（スコアボード） */
 .hud {
   position: absolute;
-  top: 16px;
-  left: 16px;
+  top: calc(16px + env(safe-area-inset-top));
+  left: calc(16px + env(safe-area-inset-left));
   pointer-events: none;
 }
 
@@ -109,9 +109,11 @@
 /* 操作説明 */
 .instructions {
   position: absolute;
-  bottom: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
+  width: 92%;
+  max-width: 480px;
   color: #fff;
   text-align: center;
   font-size: 14px;
@@ -122,4 +124,27 @@
 
 .instructions p {
   margin: 2px 0;
+}
+
+/* スマホ向けの縮小調整 */
+@media (max-width: 600px) {
+  .scoreboard {
+    padding: 8px 14px;
+  }
+  .scoreboard .goals {
+    font-size: 22px;
+  }
+  .scoreboard .attempts {
+    font-size: 13px;
+  }
+  .power-meter {
+    width: min(70vw, 260px);
+    bottom: 84px;
+  }
+  .result-banner {
+    font-size: 44px;
+  }
+  .instructions {
+    font-size: 12px;
+  }
 }

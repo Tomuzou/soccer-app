@@ -9,11 +9,22 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  height: 100dvh; /* モバイルのアドレスバーを考慮（対応ブラウザのみ上書き） */
   overflow: hidden;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   background: #0b1f3a;
+  /* タッチ時の引っ張り更新・タップハイライトを抑止 */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* iOS Safari のスクロールバウンス防止 */
+body {
+  position: fixed;
+  inset: 0;
 }
 
 canvas {
   display: block;
+  touch-action: none;
 }

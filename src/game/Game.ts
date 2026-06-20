@@ -37,10 +37,12 @@ export class Game {
   private animationId = 0;
   private clock = new THREE.Clock();
 
-  // 照準・入力状態
-  private aimX = 0; // -1〜1（左右）
+  // 照準・入力状態（ドラッグして離すスリングショット方式）
+  private aimX = 0; // -1〜1（左右コース）
   private aimY = 0.4; // 0〜1（仰角）
-  private charging = false;
+  private dragging = false;
+  private dragStartX = 0;
+  private dragStartY = 0;
   private prevBallZ = 0;
   private resultTimer = 0;
 
@@ -87,6 +89,7 @@ export class Game {
     this.setupGoal();
     this.setupBall();
     this.setupAimArrow();
+    this.updateAimArrow();
 
     // --- イベント登録 ---
     this.resizeObserver = new ResizeObserver(() => this.onResize());
@@ -245,30 +248,57 @@ export class Game {
 
   private bindInput(): void {
     const dom = this.renderer.domElement;
-    dom.addEventListener('pointermove', this.onPointerMove);
+    // タッチ操作でスクロール・ズームが発生しないようにする
+    dom.style.touchAction = 'none';
     dom.addEventListener('pointerdown', this.onPointerDown);
-    window.addEventListener('pointerup', this.onPointerUp);
+    dom.addEventListener('pointermove', this.onPointerMove);
+    dom.addEventListener('pointerup', this.onPointerUp);
+    dom.addEventListener('pointercancel', this.onPointerUp);
   }
 
+  /** ドラッグ開始位置を記録する */
+  private onPointerDown = (e: PointerEvent): void => {
+    if (this.state.phase !== 'aiming') return;
+    this.dragging = true;
+    this.dragStartX = e.clientX;
+    this.dragStartY = e.clientY;
+    this.state.power = 0;
+    // 画面外に指が出ても追従できるようにポインタを捕捉
+    this.renderer.domElement.setPointerCapture(e.pointerId);
+  };
+
+  /** ドラッグ量から方向・仰角・パワーを更新する（パチンコ式：引いた逆へ飛ぶ） */
   private onPointerMove = (e: PointerEvent): void => {
-    if (this.state.phase !== 'aiming') return;
+    if (!this.dragging || this.state.phase !== 'aiming') return;
     const rect = this.renderer.domElement.getBoundingClientRect();
-    const nx = (e.clientX - rect.left) / rect.width; // 0〜1
-    const ny = (e.clientY - rect.top) / rect.height; // 0〜1
-    this.aimX = THREE.MathUtils.clamp((nx - 0.5) * 2, -1, 1);
-    this.aimY = THREE.MathUtils.clamp(1 - ny, 0, 1); // 上にいくほど大きく
+    const maxDrag = Math.min(rect.width, rect.height) * 0.35;
+    const dx = e.clientX - this.dragStartX;
+    const dy = e.clientY - this.dragStartY; // 手前（下）に引くと正
+    this.aimX = THREE.MathUtils.clamp(-dx / maxDrag, -1, 1);
+    this.aimY = THREE.MathUtils.clamp(dy / maxDrag, 0, 1); // 手前に引くほど高く
+    this.state.power = THREE.MathUtils.clamp(
+      Math.hypot(dx, dy) / maxDrag,
+      0,
+      1,
+    );
     this.updateAimArrow();
+    this.emitState();
   };
 
-  private onPointerDown = (): void => {
+  /** 指を離すとシュート。引きが小さすぎる場合は誤タップとしてキャンセル */
+  private onPointerUp = (e: PointerEvent): void => {
+    if (!this.dragging) return;
+    this.dragging = false;
+    if (this.renderer.domElement.hasPointerCapture(e.pointerId)) {
+      this.renderer.domElement.releasePointerCapture(e.pointerId);
+    }
     if (this.state.phase !== 'aiming') return;
-    this.charging = true;
-  };
-
-  private onPointerUp = (): void => {
-    if (!this.charging) return;
-    this.charging = false;
-    if (this.state.phase === 'aiming') this.shoot();
+    if (this.state.power < 0.08) {
+      this.state.power = 0;
+      this.emitState();
+      return;
+    }
+    this.shoot();
   };
 
   // ---------------------------------------------------------------------------
@@ -352,12 +382,6 @@ export class Game {
     this.animationId = requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 1 / 30);
 
-    // パワーチャージ（押している間 0→1）
-    if (this.charging && this.state.phase === 'aiming') {
-      this.state.power = Math.min(this.state.power + dt * 0.8, 1);
-      this.emitState();
-    }
-
     // 物理ステップ
     this.world.step(1 / 60, dt, 3);
 
@@ -415,9 +439,10 @@ export class Game {
     cancelAnimationFrame(this.animationId);
     this.resizeObserver.disconnect();
     const dom = this.renderer.domElement;
-    dom.removeEventListener('pointermove', this.onPointerMove);
     dom.removeEventListener('pointerdown', this.onPointerDown);
-    window.removeEventListener('pointerup', this.onPointerUp);
+    dom.removeEventListener('pointermove', this.onPointerMove);
+    dom.removeEventListener('pointerup', this.onPointerUp);
+    dom.removeEventListener('pointercancel', this.onPointerUp);
     this.renderer.dispose();
     if (dom.parentElement) dom.parentElement.removeChild(dom);
   }
