@@ -16,9 +16,8 @@ const MAX_YAW = THREE.MathUtils.degToRad(30); // 左右の最大振り角
 const BASE_PITCH = THREE.MathUtils.degToRad(8); // 最低仰角
 const MAX_PITCH = THREE.MathUtils.degToRad(40); // 最大仰角
 
-const MAX_CURVE_SPIN = 38; // カーブ時の最大スピン（rad/s）
-const MAGNUS_COEF = 0.0042; // マグヌス力の係数（曲がり具合）
-const CURVE_GAIN = 2.6; // ドラッグの弧 → カーブ量の感度
+const MAX_CURVE_SPIN = 60; // カーブ時の最大スピン（rad/s）
+const MAGNUS_COEF = 0.008; // マグヌス力の係数（曲がり具合・やや強め）
 
 /**
  * Three.js のシーン描画と Cannon-es の物理シミュレーションを管理するクラス。
@@ -47,7 +46,6 @@ export class Game {
   private dragging = false;
   private dragStartX = 0;
   private dragStartY = 0;
-  private dragPath: { x: number; y: number }[] = [];
   private prevBallZ = 0;
   private resultTimer = 0;
 
@@ -292,9 +290,8 @@ export class Game {
     this.dragging = true;
     this.dragStartX = e.clientX;
     this.dragStartY = e.clientY;
-    this.dragPath = [{ x: e.clientX, y: e.clientY }];
     this.state.power = 0;
-    this.state.curve = 0;
+    // カーブはスライダーで設定した値を保持する（ドラッグはコースとパワーのみ）
     // 画面外に指が出ても追従できるようにポインタを捕捉
     this.renderer.domElement.setPointerCapture(e.pointerId);
   };
@@ -306,7 +303,6 @@ export class Game {
     const maxDrag = Math.min(rect.width, rect.height) * 0.35;
     const dx = e.clientX - this.dragStartX;
     const dy = e.clientY - this.dragStartY; // 手前（下）に引くと正
-    this.dragPath.push({ x: e.clientX, y: e.clientY });
     this.aimX = THREE.MathUtils.clamp(-dx / maxDrag, -1, 1);
     this.aimY = THREE.MathUtils.clamp(dy / maxDrag, 0, 1); // 手前に引くほど高く
     this.state.power = THREE.MathUtils.clamp(
@@ -314,7 +310,6 @@ export class Game {
       0,
       1,
     );
-    this.state.curve = this.computeCurve(maxDrag);
     this.updateAimArrow();
     this.emitState();
   };
@@ -329,7 +324,6 @@ export class Game {
     if (this.state.phase !== 'aiming') return;
     if (this.state.power < 0.08) {
       this.state.power = 0;
-      this.state.curve = 0;
       this.emitState();
       return;
     }
@@ -340,26 +334,14 @@ export class Game {
   // ゲームロジック
   // ---------------------------------------------------------------------------
 
-  /** ドラッグ経路の弧（直線からの符号付き偏差）からカーブ量を求める */
-  private computeCurve(maxDrag: number): number {
-    const pts = this.dragPath;
-    if (pts.length < 3) return 0;
-    const p0 = pts[0];
-    const pn = pts[pts.length - 1];
-    const baseX = pn.x - p0.x;
-    const baseY = pn.y - p0.y;
-    const baseLen = Math.hypot(baseX, baseY);
-    if (baseLen < 1) return 0;
-    let sum = 0;
-    for (let i = 1; i < pts.length - 1; i++) {
-      const vx = pts[i].x - p0.x;
-      const vy = pts[i].y - p0.y;
-      // 始点→終点を結ぶ直線に対する符号付き垂直距離
-      sum += (baseX * vy - baseY * vx) / baseLen;
-    }
-    const avg = sum / (pts.length - 2);
-    // 描いた弧の向きへ曲がるように符号を反転する
-    return THREE.MathUtils.clamp((-avg / maxDrag) * CURVE_GAIN, -1, 1);
+  /**
+   * カーブ量を設定する（-1=左カーブ 〜 1=右カーブ）。
+   * UI のカーブスライダーから呼ばれる。照準中のみ反映する。
+   */
+  setCurve(value: number): void {
+    if (this.state.phase !== 'aiming') return;
+    this.state.curve = THREE.MathUtils.clamp(value, -1, 1);
+    this.emitState();
   }
 
   /** 現在の照準から打ち出し方向の単位ベクトルを求める */
@@ -483,7 +465,7 @@ export class Game {
   private resetForNextShot(): void {
     this.resetBall();
     this.state.power = 0;
-    this.state.curve = 0;
+    // カーブはスライダーの設定値を次のキックにも引き継ぐ
     this.state.lastResult = null;
     this.aimArrow.visible = true;
     this.updateAimArrow();

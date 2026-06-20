@@ -110,6 +110,37 @@
   background: #38bdf8;
 }
 
+/* 操作可能なカーブスライダー */
+.curve-bar.interactive {
+  pointer-events: auto;
+  cursor: ew-resize;
+  touch-action: none;
+  overflow: visible;
+}
+
+/* 指で操作しやすいよう縦方向の当たり判定を広げる（見た目には影響しない） */
+.curve-bar.interactive::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -14px;
+  bottom: -14px;
+}
+
+.curve-thumb {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 22px;
+  background: #fff;
+  border: 1px solid #38bdf8;
+  border-radius: 5px;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
 /* 結果バナー */
 .result-banner {
   position: absolute;

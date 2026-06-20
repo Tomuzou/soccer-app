@@ -14,13 +14,39 @@ const INITIAL_STATE: GameState = {
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const gameRef = useRef<Game | null>(null);
+  const curveBarRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<GameState>(INITIAL_STATE);
 
   useEffect(() => {
     if (!containerRef.current) return;
     const game = new Game(containerRef.current, { onStateChange: setState });
-    return () => game.dispose();
+    gameRef.current = game;
+    return () => {
+      game.dispose();
+      gameRef.current = null;
+    };
   }, []);
+
+  /** カーブバー上のポインタ位置（左端=-1, 中央=0, 右端=+1）を Game に渡す */
+  const applyCurveFromPointer = (clientX: number) => {
+    const bar = curveBarRef.current;
+    if (!bar) return;
+    const rect = bar.getBoundingClientRect();
+    const ratio = (clientX - rect.left) / rect.width; // 0〜1
+    gameRef.current?.setCurve((ratio - 0.5) * 2);
+  };
+
+  const handleCurveDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    applyCurveFromPointer(e.clientX);
+  };
+
+  const handleCurveMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      applyCurveFromPointer(e.clientX);
+    }
+  };
 
   return (
     <div className="app">
@@ -45,7 +71,12 @@ export default function App() {
         </div>
 
         <div className="curve-label">CURVE</div>
-        <div className="curve-bar">
+        <div
+          ref={curveBarRef}
+          className="curve-bar interactive"
+          onPointerDown={handleCurveDown}
+          onPointerMove={handleCurveMove}
+        >
           <div className="curve-center" />
           <div
             className="curve-fill"
@@ -53,6 +84,10 @@ export default function App() {
               left: state.curve >= 0 ? '50%' : `${50 + state.curve * 50}%`,
               width: `${Math.abs(state.curve) * 50}%`,
             }}
+          />
+          <div
+            className="curve-thumb"
+            style={{ left: `${50 + state.curve * 50}%` }}
           />
         </div>
       </div>
@@ -69,7 +104,7 @@ export default function App() {
 
       <div className="instructions">
         <p>👆 ボールを手前にドラッグして狙う（強く引くほどパワーUP）</p>
-        <p>🍌 引くときに弧を描くとカーブ！ 離すとシュート</p>
+        <p>🍌 CURVEバーを左右に動かしてカーブ量を調整！ 離すとシュート</p>
       </div>
     </div>
   );
