@@ -89,6 +89,7 @@ export class Game {
   private netBodies = new Set<CANNON.Body>();
   private ballPhysMat = new CANNON.Material('ball');
   private netPhysMat = new CANNON.Material('net');
+  private postPhysMat = new CANNON.Material('post');
 
   /** 現在のステージセット */
   private stages: StageDefinition[] = STAGES_A;
