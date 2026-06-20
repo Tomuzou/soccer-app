@@ -8,7 +8,7 @@ import type {
   StageDefinition,
   TargetZone,
 } from '../types';
-import { STAGES } from './stages';
+import { STAGES_A, STAGES_B } from './stages';
 
 // --- ゲーム定数（単位はメートル） ---
 const GOAL_WIDTH = 7.32; // 実寸のゴール幅
@@ -31,13 +31,30 @@ const MAX_SHOT_TIME = 6; // 1ショットの最大飛行時間（秒）。跳ね
 
 /** 動く障害物（キーパー）の実体 */
 interface MovingObstacle {
+  /** sweep=sin往復 / track=ボール追従（AIキーパー） */
+  kind: 'sweep' | 'track';
   body: CANNON.Body;
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
   baseX: number;
   range: number;
   speed: number;
   t: number;
+  // --- track（AIキーパー）用 ---
+  /** ダイブ方向（-1=左 / 0=未コミット / 1=右）。一度飛んだら戻らない */
+  diveDir: number;
+  /** 移動できる左端・右端（担当範囲） */
+  minX: number;
+  maxX: number;
 }
+
+/** AIキーパーが横移動できる範囲（ゴール幅の内側に収める） */
+const KEEPER_MAX_X = GOAL_WIDTH / 2 - 0.9;
+/** 中央からこの距離以上動いたらダイブ方向を確定し、以後その方向のみへ動く */
+const KEEPER_COMMIT_DIST = 0.45;
+/** 人型メッシュの基準サイズ（このサイズで組み、def のサイズへスケールする） */
+const KEEPER_BASE_W = 1.8;
+const KEEPER_BASE_H = 1.96;
+const KEEPER_BASE_D = 0.5;
 
 /**
  * Three.js のシーン描画と Cannon-es の物理シミュレーションを管理するクラス。
@@ -55,7 +72,12 @@ export class Game {
   private ballMesh!: THREE.Mesh;
   private ballBody!: CANNON.Body;
   private barBody!: CANNON.Body;
+  private postLBody!: CANNON.Body;
+  private postRBody!: CANNON.Body;
   private aimArrow!: THREE.ArrowHelper;
+
+  /** 現在のステージセット */
+  private stages: StageDefinition[] = STAGES_A;
 
   private resizeObserver: ResizeObserver;
   private animationId = 0;
@@ -72,7 +94,7 @@ export class Game {
   private shotTimer = 0;
 
   // ステージ要素（切替時に生成／破棄する動的オブジェクト）
-  private obstacleMeshes: THREE.Mesh[] = [];
+  private obstacleMeshes: THREE.Object3D[] = [];
   private obstacleBodies = new Set<CANNON.Body>();
   private movingObstacles: MovingObstacle[] = [];
   private targetMesh: THREE.Mesh | null = null;
@@ -80,6 +102,8 @@ export class Game {
 
   // 飛行中の接触フラグ（ショットごとにリセット）
   private shotHitBar = false;
+  private shotHitPostL = false;
+  private shotHitPostR = false;
   private shotHitObstacle = false;
 
   // UI へ反映する状態
@@ -91,8 +115,9 @@ export class Game {
     lastResult: null,
     power: 0,
     curve: 0,
+    stageSet: 'a',
     stageIndex: 0,
-    stageCount: STAGES.length,
+    stageCount: STAGES_A.length,
     stageName: '',
     mission: '',
     stageAttempts: 0,
@@ -193,7 +218,7 @@ export class Game {
     const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
     const halfW = GOAL_WIDTH / 2;
 
-    const makePost = (x: number) => {
+    const makePost = (x: number): CANNON.Body => {
       const geo = new THREE.CylinderGeometry(
         POST_RADIUS,
         POST_RADIUS,
@@ -210,10 +235,12 @@ export class Game {
       });
       body.position.set(x, GOAL_HEIGHT / 2, GOAL_Z);
       this.world.addBody(body);
+      return body;
     };
 
-    makePost(-halfW);
-    makePost(halfW);
+    // 画面左（x マイナス）が左ポスト
+    this.postLBody = makePost(-halfW);
+    this.postRBody = makePost(halfW);
 
     // クロスバー
     const barGeo = new THREE.CylinderGeometry(
@@ -313,11 +340,15 @@ export class Game {
     this.scene.add(this.aimArrow);
   }
 
-  /** ボールが何かに衝突したとき、飛行中ならバー・障害物への接触を記録する */
+  /** ボールが何かに衝突したとき、飛行中ならバー・ポスト・障害物への接触を記録する */
   private onBallCollide = (event: { body: CANNON.Body | null }): void => {
     if (this.state.phase !== 'shooting' || !event.body) return;
     if (event.body === this.barBody) {
       this.shotHitBar = true;
+    } else if (event.body === this.postLBody) {
+      this.shotHitPostL = true;
+    } else if (event.body === this.postRBody) {
+      this.shotHitPostR = true;
     } else if (this.obstacleBodies.has(event.body)) {
       this.shotHitObstacle = true;
     }
@@ -338,15 +369,18 @@ export class Game {
     this.resetForNextShot();
   }
 
-  /** ステージモードを開始する（既定は最初のステージ） */
-  startStage(index = 0): void {
+  /** ステージモードを開始する（set='a'=α / 'b'=β、既定は最初のステージ） */
+  startStage(set: 'a' | 'b', index = 0): void {
+    this.stages = set === 'b' ? STAGES_B : STAGES_A;
+    this.state.stageSet = set;
+    this.state.stageCount = this.stages.length;
     this.loadStage(index);
   }
 
   /** クリア後に次のステージへ進む */
   nextStage(): void {
     if (!this.state.stageCleared) return;
-    if (this.state.stageIndex < STAGES.length - 1) {
+    if (this.state.stageIndex < this.stages.length - 1) {
       this.loadStage(this.state.stageIndex + 1);
     }
   }
@@ -368,7 +402,7 @@ export class Game {
   /** 指定インデックスのステージを読み込む */
   private loadStage(index: number): void {
     this.clearStageObjects();
-    const stage = STAGES[index];
+    const stage = this.stages[index];
     this.state.mode = 'stage';
     this.state.stageIndex = index;
     this.state.stageName = stage.name;
@@ -393,35 +427,161 @@ export class Game {
   }
 
   private addObstacle(def: ObstacleDef): void {
-    const geo = new THREE.BoxGeometry(def.w, def.h, def.d);
-    const mat = new THREE.MeshStandardMaterial({
-      color: def.move ? 0x1f6feb : 0x8b4513,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
+    const dynamic = !!(def.move || def.track);
+
+    // 見た目：AIキーパーは人型、それ以外（壁・往復キーパー）は直方体
+    let mesh: THREE.Object3D;
+    if (def.track) {
+      const keeper = this.makeKeeperMesh();
+      // 基準サイズで組んだ人型を def のサイズに合わせて拡縮
+      keeper.scale.set(
+        def.w / KEEPER_BASE_W,
+        def.h / KEEPER_BASE_H,
+        def.d / KEEPER_BASE_D,
+      );
+      mesh = keeper;
+    } else {
+      const geo = new THREE.BoxGeometry(def.w, def.h, def.d);
+      const color = def.move ? 0x1f6feb : 0x8b4513; // 往復キーパー=青 / 壁=茶
+      const box = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color }));
+      box.castShadow = true;
+      mesh = box;
+    }
     mesh.position.set(def.x, def.y, def.z);
-    mesh.castShadow = true;
     this.scene.add(mesh);
     this.obstacleMeshes.push(mesh);
 
+    // 当たり判定は箱のまま（人型でも腕を広げた範囲をカバー）
     const body = new CANNON.Body({
       mass: 0,
-      type: def.move ? CANNON.Body.KINEMATIC : CANNON.Body.STATIC,
+      type: dynamic ? CANNON.Body.KINEMATIC : CANNON.Body.STATIC,
       shape: new CANNON.Box(new CANNON.Vec3(def.w / 2, def.h / 2, def.d / 2)),
     });
     body.position.set(def.x, def.y, def.z);
     this.world.addBody(body);
     this.obstacleBodies.add(body);
 
-    if (def.move) {
+    if (def.track) {
       this.movingObstacles.push({
+        kind: 'track',
+        body,
+        mesh,
+        baseX: def.x,
+        range: 0,
+        speed: def.track.speed,
+        t: 0,
+        diveDir: 0,
+        minX: def.track.minX ?? -KEEPER_MAX_X,
+        maxX: def.track.maxX ?? KEEPER_MAX_X,
+      });
+    } else if (def.move) {
+      this.movingObstacles.push({
+        kind: 'sweep',
         body,
         mesh,
         baseX: def.x,
         range: def.move.range,
         speed: def.move.speed,
         t: 0,
+        diveDir: 0,
+        minX: -KEEPER_MAX_X,
+        maxX: KEEPER_MAX_X,
       });
     }
+  }
+
+  /**
+   * AIキーパーの人型メッシュ（Group）を基準サイズで作る。
+   * 原点はボディ中心。腕を広げた幅が基準幅に収まるよう組み、
+   * 実サイズへの拡縮は呼び出し側が group.scale で行う。
+   */
+  private makeKeeperMesh(): THREE.Group {
+    const group = new THREE.Group();
+    const jersey = new THREE.MeshStandardMaterial({ color: 0xe11d48 }); // ユニフォーム
+    const skin = new THREE.MeshStandardMaterial({ color: 0xf2c79b }); // 肌
+    const gloves = new THREE.MeshStandardMaterial({ color: 0xfacc15 }); // グローブ
+
+    const halfH = KEEPER_BASE_H / 2;
+    const add = (mesh: THREE.Mesh, x: number, y: number, z = 0): void => {
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      group.add(mesh);
+    };
+
+    // 頭
+    add(new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 16), skin), 0, halfH - 0.17);
+    // 胴体
+    add(
+      new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.66, 0.26), jersey),
+      0,
+      halfH - 0.67,
+    );
+    // 脚（2本）
+    const legGeo = new THREE.BoxGeometry(0.18, 0.7, 0.2);
+    add(new THREE.Mesh(legGeo, jersey), -0.12, -halfH + 0.35);
+    add(new THREE.Mesh(legGeo.clone(), jersey), 0.12, -halfH + 0.35);
+    // 腕（左右に水平に広げて構える。手は腕の先端に合わせる）
+    const armY = halfH - 0.5;
+    const armGeo = new THREE.BoxGeometry(0.5, 0.15, 0.15);
+    add(new THREE.Mesh(armGeo, jersey), -0.48, armY);
+    add(new THREE.Mesh(armGeo.clone(), jersey), 0.48, armY);
+    // 手（グローブ）：腕の先端と同じ高さに置く
+    const handGeo = new THREE.SphereGeometry(0.11, 12, 12);
+    add(new THREE.Mesh(handGeo, gloves), -0.76, armY);
+    add(new THREE.Mesh(handGeo.clone(), gloves), 0.76, armY);
+
+    return group;
+  }
+
+  /**
+   * AIキーパーの1フレーム更新。
+   * 飛行中はボールの現在Xを最大速度で追う。中央から一定以上動いたら飛ぶ方向を
+   * 確定し、以後その方向へのみ移動する（現実のキーパー同様、一度飛んだら逆へは戻らない）。
+   * カーブで急に逆を突かれたり、速いシュートで間に合わない場合は抜かれる。
+   * 待機中は中央へ戻って立ち直る。
+   */
+  private updateKeeper(mo: MovingObstacle, dt: number): void {
+    if (this.state.phase !== 'shooting') {
+      // 待機・結果表示中：状態をリセットし、中央へ戻って立ち上がる
+      mo.diveDir = 0;
+      const back = THREE.MathUtils.clamp(mo.baseX - mo.body.position.x, -3 * dt, 3 * dt);
+      this.applyKeeperPose(mo, mo.body.position.x + back);
+      mo.mesh.rotation.z = THREE.MathUtils.damp(mo.mesh.rotation.z, 0, 6, dt);
+      return;
+    }
+
+    const cur = mo.body.position.x;
+    // 担当範囲内でボールのXを追う
+    const desired = THREE.MathUtils.clamp(
+      this.ballBody.position.x,
+      mo.minX,
+      mo.maxX,
+    );
+    const step = mo.speed * dt;
+    let next = cur + THREE.MathUtils.clamp(desired - cur, -step, step);
+
+    if (mo.diveDir === 0) {
+      // まだコミット前：中央から十分動いたら飛ぶ方向を確定
+      if (Math.abs(next - mo.baseX) > KEEPER_COMMIT_DIST) {
+        mo.diveDir = Math.sign(next - mo.baseX);
+      }
+    } else if (mo.diveDir > 0) {
+      next = Math.max(next, cur); // 右へ飛んだら左へは戻らない
+    } else {
+      next = Math.min(next, cur); // 左へ飛んだら右へは戻らない
+    }
+
+    this.applyKeeperPose(mo, next);
+    // 動いた方向へ体を倒す（横飛びの演出）
+    const lean = THREE.MathUtils.clamp(-(next - mo.baseX) * 0.6, -1.2, 1.2);
+    mo.mesh.rotation.z = THREE.MathUtils.damp(mo.mesh.rotation.z, lean, 10, dt);
+  }
+
+  /** キーパーの body / mesh をX位置に反映（担当範囲内にクランプ） */
+  private applyKeeperPose(mo: MovingObstacle, x: number): void {
+    const cx = THREE.MathUtils.clamp(x, mo.minX, mo.maxX);
+    mo.body.position.x = cx;
+    mo.mesh.position.x = cx;
   }
 
   private makeTargetMesh(target: TargetZone): THREE.Mesh {
@@ -440,10 +600,15 @@ export class Game {
 
   /** ステージ固有のメッシュ・ボディを破棄する */
   private clearStageObjects(): void {
-    for (const mesh of this.obstacleMeshes) {
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
+    for (const obj of this.obstacleMeshes) {
+      this.scene.remove(obj);
+      // 直方体（Mesh）も人型（Group）もまとめて破棄
+      obj.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          (child.material as THREE.Material).dispose();
+        }
+      });
     }
     this.obstacleMeshes = [];
 
@@ -565,6 +730,8 @@ export class Game {
     this.prevBallZ = this.ballBody.position.z;
     this.shotTimer = 0;
     this.shotHitBar = false;
+    this.shotHitPostL = false;
+    this.shotHitPostR = false;
     this.shotHitObstacle = false;
     this.aimArrow.visible = false;
     this.setPhase('shooting');
@@ -622,7 +789,7 @@ export class Game {
 
   /** ステージモードのショット評価。条件をすべて満たせばクリア */
   private finishStageShot(inside: boolean, inTarget: boolean): void {
-    const stage = STAGES[this.state.stageIndex];
+    const stage = this.stages[this.state.stageIndex];
     this.state.attempts += 1;
     this.state.stageAttempts += 1;
 
@@ -630,13 +797,15 @@ export class Game {
       (stage.requireGoal ? inside : true) &&
       (stage.target ? inTarget : true) &&
       (stage.hitBar ? this.shotHitBar : true) &&
+      (stage.hitPostL ? this.shotHitPostL : true) &&
+      (stage.hitPostR ? this.shotHitPostR : true) &&
       !this.shotHitObstacle;
 
     if (success) {
       // クリア表示はオーバーレイで行うため結果バナーは出さない
       this.state.lastResult = null;
       this.state.stageCleared = true;
-      if (this.state.stageIndex >= STAGES.length - 1) {
+      if (this.state.stageIndex >= this.stages.length - 1) {
         this.state.allCleared = true;
       }
     } else {
@@ -663,12 +832,17 @@ export class Game {
     this.animationId = requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 1 / 30);
 
-    // 動く障害物（キーパー）の往復更新
+    // 動く障害物（キーパー）の更新
     for (const mo of this.movingObstacles) {
-      mo.t += dt * mo.speed;
-      const x = mo.baseX + Math.sin(mo.t) * mo.range;
-      mo.body.position.x = x;
-      mo.mesh.position.x = x;
+      if (mo.kind === 'track') {
+        this.updateKeeper(mo, dt);
+      } else {
+        // 往復キーパー：sin で左右に振る
+        mo.t += dt * mo.speed;
+        const x = mo.baseX + Math.sin(mo.t) * mo.range;
+        mo.body.position.x = x;
+        mo.mesh.position.x = x;
+      }
     }
 
     // 飛行中はマグヌス力（F = k * ω × v）で軌道を曲げる。

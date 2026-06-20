@@ -11,6 +11,7 @@ const INITIAL_STATE: GameState = {
   lastResult: null,
   power: 0,
   curve: 0,
+  stageSet: 'a',
   stageIndex: 0,
   stageCount: 0,
   stageName: '',
@@ -30,6 +31,10 @@ export default function App() {
     if (!containerRef.current) return;
     const game = new Game(containerRef.current, { onStateChange: setState });
     gameRef.current = game;
+    // 開発時のみ：コンソールから任意ステージを開始できるよう公開（例: game.startStage('b', 4)）
+    if (import.meta.env.DEV) {
+      (window as unknown as { game: Game }).game = game;
+    }
     return () => {
       game.dispose();
       gameRef.current = null;
@@ -78,11 +83,47 @@ export default function App() {
             </button>
             <button
               className="menu-btn"
-              onClick={() => gameRef.current?.startStage(0)}
+              onClick={() => gameRef.current?.startStage('a', 0)}
             >
-              ステージモード
+              ステージモード-α
+            </button>
+            <button
+              className="menu-btn beta"
+              onClick={() => gameRef.current?.startStage('b', 0)}
+            >
+              ステージモード-β
+              <span className="btn-badge">高難度</span>
             </button>
           </div>
+
+          {/* 開発時のみ：任意ステージへジャンプ（テスト用） */}
+          {import.meta.env.DEV && (
+            <div className="dev-jump">
+              <div className="dev-jump-label">DEV: ステージへジャンプ</div>
+              <div className="dev-jump-row">
+                <span className="dev-jump-set">α</span>
+                {Array.from({ length: 10 }, (_, i) => (
+                  <button
+                    key={`a${i}`}
+                    onClick={() => gameRef.current?.startStage('a', i)}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+              </div>
+              <div className="dev-jump-row">
+                <span className="dev-jump-set">β</span>
+                {Array.from({ length: 10 }, (_, i) => (
+                  <button
+                    key={`b${i}`}
+                    onClick={() => gameRef.current?.startStage('b', i)}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -92,7 +133,7 @@ export default function App() {
           {inStage ? (
             <div className="stage-info">
               <div className="stage-no">
-                STAGE {state.stageIndex + 1}
+                STAGE {state.stageSet === 'b' ? 'β' : 'α'}-{state.stageIndex + 1}
                 <span className="stage-total"> / {state.stageCount}</span>
               </div>
               <div className="stage-name">{state.stageName}</div>

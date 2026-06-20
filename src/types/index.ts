@@ -21,7 +21,7 @@ export interface TargetZone {
   h: number; // 高さ
 }
 
-/** ステージ内の障害物（直方体）。move付きは左右に往復する。 */
+/** ステージ内の障害物（直方体）。move付きは往復、track付きはボールを追跡する。 */
 export interface ObstacleDef {
   x: number; // 中心X
   y: number; // 中心Y
@@ -29,11 +29,17 @@ export interface ObstacleDef {
   w: number; // 幅
   h: number; // 高さ
   d: number; // 奥行き
-  /** 動く障害物（キーパー）の設定 */
+  /** 一定パターンで左右に往復する障害物（キーパー）の設定 */
   move?: {
     axis: 'x';
     range: number; // 中心からの片振り幅
     speed: number; // 往復の速さ（rad/s 相当）
+  };
+  /** ボールのXを追跡するAIキーパーの設定 */
+  track?: {
+    speed: number; // 横移動の最大速度（m/s）。大きいほど手強い
+    minX?: number; // 移動できる左端（担当範囲。省略時は全幅）
+    maxX?: number; // 移動できる右端（担当範囲。省略時は全幅）
   };
 }
 
@@ -47,6 +53,10 @@ export interface StageDefinition {
   requireGoal: boolean;
   /** クロスバーに当てる必要があるか */
   hitBar?: boolean;
+  /** 左ポストに当てる必要があるか */
+  hitPostL?: boolean;
+  /** 右ポストに当てる必要があるか */
+  hitPostR?: boolean;
   /** 通過すべきターゲットゾーン */
   target?: TargetZone;
   /** 触れたら失敗する障害物 */
@@ -66,6 +76,8 @@ export interface GameState {
   /** -1（左カーブ）〜1（右カーブ） */
   curve: number;
   // --- ステージモード用 ---
+  /** ステージセット（'a'=α / 'b'=β） */
+  stageSet: 'a' | 'b';
   /** 現在のステージ番号（0始まり） */
   stageIndex: number;
   /** 総ステージ数 */

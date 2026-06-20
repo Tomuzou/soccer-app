@@ -1,12 +1,12 @@
-import type { StageDefinition } from '../types';
+import type { ObstacleDef, StageDefinition } from '../types';
 
 /**
- * ステージ定義（全10ステージ）。
+ * ステージモード-α（全10ステージ・標準難度）。
  * 座標はメートル。ゴール面は x: ±3.66 / y: 0〜2.44、ゴールラインは z = -18。
  * 障害物の z はボール位置(0)とゴール(-18)の間に置く。
  * 難易度は「的ゾーンの小ささ・障害物の数/大きさ・動く速さ」で調整する。
  */
-export const STAGES: StageDefinition[] = [
+export const STAGES_A: StageDefinition[] = [
   {
     id: 1,
     name: 'はじめの一歩',
@@ -84,6 +84,112 @@ export const STAGES: StageDefinition[] = [
     obstacles: [
       { x: 0, y: 1.0, z: -9, w: 3.6, h: 2.0, d: 0.4 },
       { x: 0, y: 0.95, z: -16.5, w: 1.6, h: 1.9, d: 0.5, move: { axis: 'x', range: 2.8, speed: 2.0 } },
+    ],
+  },
+];
+
+/** AIキーパー（ボール追跡）の共通定義を作るヘルパー。サイズ・位置・担当範囲を指定可。 */
+const aiKeeper = (
+  speed: number,
+  opts: { x?: number; w?: number; h?: number; minX?: number; maxX?: number } = {},
+): ObstacleDef => {
+  const w = opts.w ?? 1.8;
+  const h = opts.h ?? 1.96;
+  return {
+    x: opts.x ?? 0,
+    y: h / 2,
+    z: -16.5,
+    w,
+    h,
+    d: 0.5,
+    track: { speed, minX: opts.minX, maxX: opts.maxX },
+  };
+};
+
+/**
+ * ステージモード-β（全10ステージ・高難度）。
+ * サイドネット／ポスト当て／ボールを追うAIキーパーで構成する。
+ * AIキーパーは速い／カーブの効いたシュートでないと阻まれる。
+ */
+export const STAGES_B: StageDefinition[] = [
+  {
+    id: 1,
+    name: 'サイドネット（右）',
+    mission: '右のサイドネットに突き刺せ！',
+    requireGoal: true,
+    target: { x: 3.0, y: 1.3, w: 1.1, h: 2.2 },
+  },
+  {
+    id: 2,
+    name: 'サイドネット（左）',
+    mission: '左のサイドネットに突き刺せ！',
+    requireGoal: true,
+    target: { x: -3.0, y: 1.3, w: 1.1, h: 2.2 },
+  },
+  {
+    id: 3,
+    name: '左ポストショット',
+    mission: '左ポストに当てよう！',
+    requireGoal: false,
+    hitPostL: true,
+  },
+  {
+    id: 4,
+    name: '右ポストショット',
+    mission: '右ポストに当てよう！',
+    requireGoal: false,
+    hitPostR: true,
+  },
+  {
+    id: 5,
+    name: 'AIキーパー登場',
+    mission: 'AIキーパーをかわしてゴール！',
+    requireGoal: true,
+    obstacles: [aiKeeper(3.4)],
+  },
+  {
+    id: 6,
+    name: '巨漢キーパー',
+    mission: 'デカいキーパーの脇を抜け！',
+    requireGoal: true,
+    // 大きいが鈍い：隅を狙えば抜ける
+    obstacles: [aiKeeper(2.6, { w: 3.3, h: 2.25 })],
+  },
+  {
+    id: 7,
+    name: '2人の壁',
+    mission: '2人のキーパーの間や上を抜け！',
+    requireGoal: true,
+    // 左右に1人ずつ。それぞれ自分側の半面を守る
+    obstacles: [
+      aiKeeper(3.8, { x: -1.7, maxX: -0.15 }),
+      aiKeeper(3.8, { x: 1.7, minX: 0.15 }),
+    ],
+  },
+  {
+    id: 8,
+    name: '壁とAIキーパー',
+    mission: '壁を越えAIキーパーも抜いてゴール！',
+    requireGoal: true,
+    obstacles: [{ x: 0, y: 0.95, z: -9, w: 3.2, h: 1.9, d: 0.4 }, aiKeeper(3.4)],
+  },
+  {
+    id: 9,
+    name: 'キーパー＆サイドネット',
+    mission: 'AIキーパーを抜いて右サイドネットへ！',
+    requireGoal: true,
+    target: { x: 3.0, y: 1.3, w: 1.1, h: 2.2 },
+    obstacles: [aiKeeper(3.8)],
+  },
+  {
+    id: 10,
+    name: '最終決戦',
+    mission: '壁・AIキーパーを越えて隅に決めろ！',
+    requireGoal: true,
+    target: { x: -2.6, y: 1.85, w: 1.4, h: 0.9 },
+    obstacles: [
+      { x: 0, y: 1.0, z: -9, w: 3.4, h: 2.0, d: 0.4 },
+      aiKeeper(4.2),
     ],
   },
 ];

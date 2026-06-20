@@ -118,6 +118,52 @@
   width: min(80vw, 260px);
 }
 
+/* 開発用：ステージジャンプ（DEVのみ表示） */
+.dev-jump {
+  margin-top: 20px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px dashed rgba(255, 255, 255, 0.4);
+  border-radius: 10px;
+}
+
+.dev-jump-label {
+  color: #fff;
+  font-size: 11px;
+  letter-spacing: 1px;
+  opacity: 0.8;
+  margin-bottom: 6px;
+}
+
+.dev-jump-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.dev-jump-set {
+  color: #fde047;
+  font-weight: 700;
+  width: 16px;
+  text-align: center;
+}
+
+.dev-jump-row button {
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.dev-jump-row button:active {
+  transform: scale(0.92);
+}
+
 /* 共通ボタン */
 .menu-btn {
   padding: 14px 24px;
@@ -146,6 +192,30 @@
 
 .menu-btn.primary:hover {
   background: linear-gradient(90deg, #34d56b, #1bb14e);
+}
+
+.menu-btn.beta {
+  position: relative;
+  background: linear-gradient(90deg, #f43f5e, #b91c1c);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.menu-btn.beta:hover {
+  background: linear-gradient(90deg, #fb5168, #d11d1d);
+}
+
+.btn-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #b91c1c;
+  background: #fde047;
+  padding: 2px 6px;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
 /* メニューに戻るボタン（プレイ中・右上） */
