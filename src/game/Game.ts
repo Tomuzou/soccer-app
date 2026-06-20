@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import type { GameCallbacks, GamePhase, GameState, ShotResult } from '../types';
+import type {
+  GameCallbacks,
+  GamePhase,
+  GameState,
+  ObstacleDef,
+  StageDefinition,
+  TargetZone,
+} from '../types';
+import { STAGES } from './stages';
 
 // --- ゲーム定数（単位はメートル） ---
 const GOAL_WIDTH = 7.32; // 実寸のゴール幅
@@ -19,6 +27,18 @@ const MAX_PITCH = THREE.MathUtils.degToRad(40); // 最大仰角
 const MAX_CURVE_SPIN = 60; // カーブ時の最大スピン（rad/s）
 const MAGNUS_COEF = 0.008; // マグヌス力の係数（曲がり具合・やや強め）
 
+const MAX_SHOT_TIME = 6; // 1ショットの最大飛行時間（秒）。跳ね返り続けを強制終了する保険
+
+/** 動く障害物（キーパー）の実体 */
+interface MovingObstacle {
+  body: CANNON.Body;
+  mesh: THREE.Mesh;
+  baseX: number;
+  range: number;
+  speed: number;
+  t: number;
+}
+
 /**
  * Three.js のシーン描画と Cannon-es の物理シミュレーションを管理するクラス。
  * React のレンダリングとは独立して requestAnimationFrame ループで駆動する。
@@ -34,6 +54,7 @@ export class Game {
 
   private ballMesh!: THREE.Mesh;
   private ballBody!: CANNON.Body;
+  private barBody!: CANNON.Body;
   private aimArrow!: THREE.ArrowHelper;
 
   private resizeObserver: ResizeObserver;
@@ -48,15 +69,35 @@ export class Game {
   private dragStartY = 0;
   private prevBallZ = 0;
   private resultTimer = 0;
+  private shotTimer = 0;
+
+  // ステージ要素（切替時に生成／破棄する動的オブジェクト）
+  private obstacleMeshes: THREE.Mesh[] = [];
+  private obstacleBodies = new Set<CANNON.Body>();
+  private movingObstacles: MovingObstacle[] = [];
+  private targetMesh: THREE.Mesh | null = null;
+  private currentTarget: TargetZone | null = null;
+
+  // 飛行中の接触フラグ（ショットごとにリセット）
+  private shotHitBar = false;
+  private shotHitObstacle = false;
 
   // UI へ反映する状態
   private state: GameState = {
+    mode: null,
     phase: 'aiming',
     score: 0,
     attempts: 0,
     lastResult: null,
     power: 0,
     curve: 0,
+    stageIndex: 0,
+    stageCount: STAGES.length,
+    stageName: '',
+    mission: '',
+    stageAttempts: 0,
+    stageCleared: false,
+    allCleared: false,
   };
 
   constructor(container: HTMLElement, callbacks: GameCallbacks) {
@@ -93,7 +134,8 @@ export class Game {
     this.setupGoal();
     this.setupBall();
     this.setupAimArrow();
-    this.updateAimArrow();
+    // タイトル画面では照準を出さない
+    this.aimArrow.visible = false;
 
     // --- イベント登録 ---
     this.resizeObserver = new ResizeObserver(() => this.onResize());
@@ -185,7 +227,7 @@ export class Game {
     bar.castShadow = true;
     this.scene.add(bar);
 
-    const barBody = new CANNON.Body({
+    this.barBody = new CANNON.Body({
       mass: 0,
       shape: new CANNON.Cylinder(
         POST_RADIUS,
@@ -194,9 +236,9 @@ export class Game {
         8,
       ),
     });
-    barBody.quaternion.setFromEuler(0, 0, Math.PI / 2);
-    barBody.position.set(0, GOAL_HEIGHT, GOAL_Z);
-    this.world.addBody(barBody);
+    this.barBody.quaternion.setFromEuler(0, 0, Math.PI / 2);
+    this.barBody.position.set(0, GOAL_HEIGHT, GOAL_Z);
+    this.world.addBody(this.barBody);
 
     // 簡易ネット（見た目だけ）
     const netMat = new THREE.MeshBasicMaterial({
@@ -229,6 +271,7 @@ export class Game {
       linearDamping: 0.2,
       angularDamping: 0.2,
     });
+    this.ballBody.addEventListener('collide', this.onBallCollide);
     this.world.addBody(this.ballBody);
 
     this.resetBall();
@@ -270,6 +313,155 @@ export class Game {
     this.scene.add(this.aimArrow);
   }
 
+  /** ボールが何かに衝突したとき、飛行中ならバー・障害物への接触を記録する */
+  private onBallCollide = (event: { body: CANNON.Body | null }): void => {
+    if (this.state.phase !== 'shooting' || !event.body) return;
+    if (event.body === this.barBody) {
+      this.shotHitBar = true;
+    } else if (this.obstacleBodies.has(event.body)) {
+      this.shotHitObstacle = true;
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // モード制御（React の UI から呼ばれる）
+  // ---------------------------------------------------------------------------
+
+  /** フリープレイを開始する */
+  startFreePlay(): void {
+    this.clearStageObjects();
+    this.state.mode = 'free';
+    this.state.score = 0;
+    this.state.attempts = 0;
+    this.state.stageCleared = false;
+    this.state.allCleared = false;
+    this.resetForNextShot();
+  }
+
+  /** ステージモードを開始する（既定は最初のステージ） */
+  startStage(index = 0): void {
+    this.loadStage(index);
+  }
+
+  /** クリア後に次のステージへ進む */
+  nextStage(): void {
+    if (!this.state.stageCleared) return;
+    if (this.state.stageIndex < STAGES.length - 1) {
+      this.loadStage(this.state.stageIndex + 1);
+    }
+  }
+
+  /** タイトル画面へ戻る */
+  returnToMenu(): void {
+    this.clearStageObjects();
+    this.dragging = false;
+    this.state.mode = null;
+    this.state.lastResult = null;
+    this.state.stageCleared = false;
+    this.state.allCleared = false;
+    this.state.power = 0;
+    this.resetBall();
+    this.aimArrow.visible = false;
+    this.setPhase('aiming');
+  }
+
+  /** 指定インデックスのステージを読み込む */
+  private loadStage(index: number): void {
+    this.clearStageObjects();
+    const stage = STAGES[index];
+    this.state.mode = 'stage';
+    this.state.stageIndex = index;
+    this.state.stageName = stage.name;
+    this.state.mission = stage.mission;
+    this.state.stageAttempts = 0;
+    this.state.stageCleared = false;
+    this.state.allCleared = false;
+    this.buildStageObjects(stage);
+    this.resetForNextShot();
+  }
+
+  /** ステージ定義から障害物・ターゲットゾーンを生成する */
+  private buildStageObjects(stage: StageDefinition): void {
+    for (const def of stage.obstacles ?? []) {
+      this.addObstacle(def);
+    }
+    this.currentTarget = stage.target ?? null;
+    if (stage.target) {
+      this.targetMesh = this.makeTargetMesh(stage.target);
+      this.scene.add(this.targetMesh);
+    }
+  }
+
+  private addObstacle(def: ObstacleDef): void {
+    const geo = new THREE.BoxGeometry(def.w, def.h, def.d);
+    const mat = new THREE.MeshStandardMaterial({
+      color: def.move ? 0x1f6feb : 0x8b4513,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(def.x, def.y, def.z);
+    mesh.castShadow = true;
+    this.scene.add(mesh);
+    this.obstacleMeshes.push(mesh);
+
+    const body = new CANNON.Body({
+      mass: 0,
+      type: def.move ? CANNON.Body.KINEMATIC : CANNON.Body.STATIC,
+      shape: new CANNON.Box(new CANNON.Vec3(def.w / 2, def.h / 2, def.d / 2)),
+    });
+    body.position.set(def.x, def.y, def.z);
+    this.world.addBody(body);
+    this.obstacleBodies.add(body);
+
+    if (def.move) {
+      this.movingObstacles.push({
+        body,
+        mesh,
+        baseX: def.x,
+        range: def.move.range,
+        speed: def.move.speed,
+        t: 0,
+      });
+    }
+  }
+
+  private makeTargetMesh(target: TargetZone): THREE.Mesh {
+    const geo = new THREE.PlaneGeometry(target.w, target.h);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xff3355,
+      transparent: true,
+      opacity: 0.35,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    // ゴール面のわずか手前に表示
+    mesh.position.set(target.x, target.y, GOAL_Z + 0.05);
+    return mesh;
+  }
+
+  /** ステージ固有のメッシュ・ボディを破棄する */
+  private clearStageObjects(): void {
+    for (const mesh of this.obstacleMeshes) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    this.obstacleMeshes = [];
+
+    for (const body of this.obstacleBodies) {
+      this.world.removeBody(body);
+    }
+    this.obstacleBodies.clear();
+    this.movingObstacles = [];
+
+    if (this.targetMesh) {
+      this.scene.remove(this.targetMesh);
+      this.targetMesh.geometry.dispose();
+      (this.targetMesh.material as THREE.Material).dispose();
+      this.targetMesh = null;
+    }
+    this.currentTarget = null;
+  }
+
   // ---------------------------------------------------------------------------
   // 入力
   // ---------------------------------------------------------------------------
@@ -286,6 +478,7 @@ export class Game {
 
   /** ドラッグ開始位置を記録する */
   private onPointerDown = (e: PointerEvent): void => {
+    if (this.state.mode === null) return; // タイトル画面では無効
     if (this.state.phase !== 'aiming') return;
     this.dragging = true;
     this.dragStartX = e.clientX;
@@ -370,6 +563,9 @@ export class Game {
     this.ballBody.angularVelocity.set(-dir.z * 8, spin, dir.x * 8);
 
     this.prevBallZ = this.ballBody.position.z;
+    this.shotTimer = 0;
+    this.shotHitBar = false;
+    this.shotHitObstacle = false;
     this.aimArrow.visible = false;
     this.setPhase('shooting');
   }
@@ -383,25 +579,70 @@ export class Game {
     this.prevBallZ = 0;
   }
 
+  /** ゴール面のターゲットゾーン内に (x, y) があるか */
+  private inZone(x: number, y: number, t: TargetZone): boolean {
+    return (
+      x > t.x - t.w / 2 &&
+      x < t.x + t.w / 2 &&
+      y > t.y - t.h / 2 &&
+      y < t.y + t.h / 2
+    );
+  }
+
   /** ゴールラインを跨いだ瞬間に枠内かどうか判定する */
   private checkGoalCrossing(): void {
     const z = this.ballBody.position.z;
     if (this.prevBallZ > GOAL_Z && z <= GOAL_Z) {
       const x = this.ballBody.position.x;
       const y = this.ballBody.position.y;
-      const inside =
-        Math.abs(x) < GOAL_WIDTH / 2 && y > 0 && y < GOAL_HEIGHT;
-      this.finishShot(inside ? 'goal' : 'miss');
+      const inside = Math.abs(x) < GOAL_WIDTH / 2 && y > 0 && y < GOAL_HEIGHT;
+      const inTarget = this.currentTarget
+        ? this.inZone(x, y, this.currentTarget)
+        : false;
+      this.finishShot(inside, inTarget);
     }
     this.prevBallZ = z;
   }
 
-  private finishShot(result: ShotResult): void {
+  /** ショット終了。inside=枠内通過, inTarget=ターゲット通過 */
+  private finishShot(inside: boolean, inTarget: boolean): void {
     if (this.state.phase !== 'shooting') return;
+    if (this.state.mode === 'stage') {
+      this.finishStageShot(inside, inTarget);
+      return;
+    }
+    // フリープレイ
     this.state.attempts += 1;
-    if (result === 'goal') this.state.score += 1;
-    this.state.lastResult = result;
-    this.resultTimer = result === 'goal' ? 2.0 : 1.5;
+    const goal = inside;
+    if (goal) this.state.score += 1;
+    this.state.lastResult = goal ? 'goal' : 'miss';
+    this.resultTimer = goal ? 2.0 : 1.5;
+    this.setPhase('result');
+  }
+
+  /** ステージモードのショット評価。条件をすべて満たせばクリア */
+  private finishStageShot(inside: boolean, inTarget: boolean): void {
+    const stage = STAGES[this.state.stageIndex];
+    this.state.attempts += 1;
+    this.state.stageAttempts += 1;
+
+    const success =
+      (stage.requireGoal ? inside : true) &&
+      (stage.target ? inTarget : true) &&
+      (stage.hitBar ? this.shotHitBar : true) &&
+      !this.shotHitObstacle;
+
+    if (success) {
+      // クリア表示はオーバーレイで行うため結果バナーは出さない
+      this.state.lastResult = null;
+      this.state.stageCleared = true;
+      if (this.state.stageIndex >= STAGES.length - 1) {
+        this.state.allCleared = true;
+      }
+    } else {
+      this.state.lastResult = 'miss';
+      this.resultTimer = 1.5;
+    }
     this.setPhase('result');
   }
 
@@ -421,6 +662,14 @@ export class Game {
   private animate = (): void => {
     this.animationId = requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 1 / 30);
+
+    // 動く障害物（キーパー）の往復更新
+    for (const mo of this.movingObstacles) {
+      mo.t += dt * mo.speed;
+      const x = mo.baseX + Math.sin(mo.t) * mo.range;
+      mo.body.position.x = x;
+      mo.mesh.position.x = x;
+    }
 
     // 飛行中はマグヌス力（F = k * ω × v）で軌道を曲げる。
     // 力は物理ステップ前に加える（cannon-es はステップ後に力をクリアする）。
@@ -442,17 +691,23 @@ export class Game {
 
     if (this.state.phase === 'shooting') {
       this.checkGoalCrossing();
-      // 枠を大きく外れた／止まった場合のミス判定
+      // 枠を大きく外れた／止まった／飛び続けた場合のショット終了判定
+      this.shotTimer += dt;
       const v = this.ballBody.velocity.length();
       const outOfBounds =
         this.ballBody.position.z < GOAL_Z - 3 ||
         Math.abs(this.ballBody.position.x) > 25;
-      if (outOfBounds || (v < 0.3 && this.ballBody.position.z < -1)) {
-        this.finishShot('miss');
+      if (
+        outOfBounds ||
+        (v < 0.3 && this.ballBody.position.z < -1) ||
+        this.shotTimer > MAX_SHOT_TIME
+      ) {
+        this.finishShot(false, false);
       }
     }
 
-    if (this.state.phase === 'result') {
+    // 結果表示中（ステージクリア中は次操作までそのまま待機）
+    if (this.state.phase === 'result' && !this.state.stageCleared) {
       this.resultTimer -= dt;
       if (this.resultTimer <= 0) {
         this.resetForNextShot();
@@ -488,6 +743,8 @@ export class Game {
   dispose(): void {
     cancelAnimationFrame(this.animationId);
     this.resizeObserver.disconnect();
+    this.clearStageObjects();
+    this.ballBody.removeEventListener('collide', this.onBallCollide);
     const dom = this.renderer.domElement;
     dom.removeEventListener('pointerdown', this.onPointerDown);
     dom.removeEventListener('pointermove', this.onPointerMove);

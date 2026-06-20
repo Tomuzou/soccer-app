@@ -40,6 +40,174 @@
   opacity: 0.8;
 }
 
+/* ステージ情報 HUD */
+.stage-info {
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 12px;
+  backdrop-filter: blur(4px);
+  min-width: 180px;
+}
+
+.stage-no {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.stage-no .stage-total {
+  font-size: 14px;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.stage-name {
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 2px;
+  color: #fde047;
+}
+
+.stage-mission {
+  font-size: 13px;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.stage-attempts {
+  font-size: 12px;
+  opacity: 0.75;
+  margin-top: 4px;
+}
+
+/* タイトル画面 */
+.title-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(2px);
+  text-align: center;
+}
+
+.title-logo {
+  color: #fff;
+  font-size: 48px;
+  font-weight: 800;
+  margin: 0;
+  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.title-sub {
+  color: #fff;
+  font-size: 16px;
+  margin: 0 0 16px;
+  opacity: 0.9;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.title-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(80vw, 260px);
+}
+
+/* 共通ボタン */
+.menu-btn {
+  padding: 14px 24px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+
+.menu-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.menu-btn:active {
+  transform: scale(0.96);
+}
+
+.menu-btn.primary {
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.menu-btn.primary:hover {
+  background: linear-gradient(90deg, #34d56b, #1bb14e);
+}
+
+/* メニューに戻るボタン（プレイ中・右上） */
+.back-btn {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top));
+  right: calc(16px + env(safe-area-inset-right));
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.back-btn:active {
+  transform: scale(0.96);
+}
+
+/* クリア／全クリアのオーバーレイ */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(3px);
+  text-align: center;
+  animation: pop 0.3s ease-out;
+}
+
+.overlay-title {
+  font-size: 52px;
+  font-weight: 800;
+  color: #4ade80;
+  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.overlay-title.gold {
+  color: #fde047;
+}
+
+.overlay-text {
+  color: #fff;
+  font-size: 16px;
+  margin: 0;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.overlay-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(80vw, 240px);
+}
+
 /* パワーメーター */
 .power-meter {
   position: absolute;
@@ -212,6 +380,28 @@
     font-size: 44px;
   }
   .instructions {
+    font-size: 12px;
+  }
+  .title-logo {
+    font-size: 34px;
+  }
+  .title-sub {
+    font-size: 14px;
+  }
+  .overlay-title {
+    font-size: 38px;
+  }
+  .stage-info {
+    padding: 8px 12px;
+    min-width: 150px;
+  }
+  .stage-no {
+    font-size: 17px;
+  }
+  .stage-name {
+    font-size: 13px;
+  }
+  .stage-mission {
     font-size: 12px;
   }
 }
