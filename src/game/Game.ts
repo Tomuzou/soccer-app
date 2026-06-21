@@ -554,11 +554,15 @@ export class Game {
   /**
    * 今のショットを中断して即座に蹴り直す。
    * 壁に当たって失速したボールの停止待ち（結果表示）を飛ばすためのもの。
+   * 飛行中（未判定）なら失敗として確定してから蹴り直すので、蹴り直しは
+   * 常に1回の失敗としてカウントされる（判定済みの結果は二重計上しない）。
    * クリア表示中は次操作を優先するため何もしない。
    */
   retryShot(): void {
     if (this.state.mode === null) return;
     if (this.state.stageCleared) return;
+    // phase が 'shooting' のときだけ失敗として計上される（finishShot 内のガード）
+    this.finishShot(false, false);
     this.resetForNextShot();
   }
 
