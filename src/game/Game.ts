@@ -377,8 +377,8 @@ export class Game {
     canvas.height = size;
     const ctx = canvas.getContext('2d')!;
     ctx.clearRect(0, 0, size, size);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-    ctx.lineWidth = 11;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.lineWidth = 7;
     const step = size / 4;
     for (let i = 0; i <= 4; i++) {
       ctx.beginPath();
