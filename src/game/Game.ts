@@ -82,7 +82,10 @@ export class Game {
   // ゴールネット（見た目＋ゴール演出）
   private netMaterials: THREE.MeshBasicMaterial[] = [];
   private netBackMesh!: THREE.Mesh;
-  private netBackBaseZ = 0;
+  private netBackGeo!: THREE.PlaneGeometry;
+  private netBackBasePos!: Float32Array;
+  private netImpactX = 0;
+  private netImpactY = 0;
   private netFlashTimer = 0;
 
   // ネットの当たり判定（ボールを受け止めて止める）
@@ -217,7 +220,7 @@ export class Game {
 
     // 簡易のサイドライン的なグリッド
     const grid = new THREE.GridHelper(60, 30, 0x55aa55, 0x55aa55);
-    (grid.material as THREE.Material).opacity = 0.25;
+    (grid.material as THREE.Material).opacity = 0.4;
     (grid.material as THREE.Material).transparent = true;
     this.scene.add(grid);
 
@@ -247,6 +250,7 @@ export class Game {
       const body = new CANNON.Body({
         mass: 0,
         shape: new CANNON.Cylinder(POST_RADIUS, POST_RADIUS, GOAL_HEIGHT, 8),
+        material: this.postPhysMat,
       });
       body.position.set(x, GOAL_HEIGHT / 2, GOAL_Z);
       this.world.addBody(body);
@@ -277,6 +281,7 @@ export class Game {
         GOAL_WIDTH + POST_RADIUS * 2,
         8,
       ),
+      material: this.postPhysMat,
     });
     this.barBody.quaternion.setFromEuler(0, 0, Math.PI / 2);
     this.barBody.position.set(0, GOAL_HEIGHT, GOAL_Z);
@@ -285,13 +290,16 @@ export class Game {
     // ゴールネット（グリッド模様の背面・左右・天井パネル）
     const backZ = GOAL_Z - NET_DEPTH;
 
-    // 背面（揺れ演出のため参照を保持）
-    this.netBackMesh = this.makeNetPanel(GOAL_WIDTH, GOAL_HEIGHT);
+    // 背面（揺れ演出のため分割メッシュにして頂点を変形できるようにする）
+    this.netBackMesh = this.makeNetPanel(GOAL_WIDTH, GOAL_HEIGHT, 28, 14);
     this.netBackMesh.position.set(0, GOAL_HEIGHT / 2, backZ);
-    this.netBackBaseZ = backZ;
+    this.netBackGeo = this.netBackMesh.geometry as THREE.PlaneGeometry;
+    this.netBackBasePos = Float32Array.from(
+      this.netBackGeo.attributes.position.array,
+    );
     this.scene.add(this.netBackMesh);
 
-    // 左右の側面（y-z 平面に立てる）
+    // 左右の側面（y-z 平面に立てる）。背面ネットと見え方を揃える
     const sideL = this.makeNetPanel(NET_DEPTH, GOAL_HEIGHT);
     sideL.rotation.y = Math.PI / 2;
     sideL.position.set(-halfW, GOAL_HEIGHT / 2, GOAL_Z - NET_DEPTH / 2);
@@ -312,7 +320,7 @@ export class Game {
     const midZ = GOAL_Z - NET_DEPTH / 2;
     const t = 0.04; // 板の薄さ
     // 背面：高速シュートのすり抜け防止に厚みを持たせ、手前面をネット位置に合わせる
-    const backHalfZ = 0.3;
+    const backHalfZ = 0.6;
     this.addNetBody(
       GOAL_WIDTH / 2,
       GOAL_HEIGHT / 2,
@@ -336,8 +344,8 @@ export class Game {
     // ボールとバー・ポストは高反発（カキーンと弾く）
     this.world.addContactMaterial(
       new CANNON.ContactMaterial(this.ballPhysMat, this.postPhysMat, {
-        restitution: 0.9,
-        friction: 0.1,
+        restitution: 0.95,
+        friction: 0.05,
       }),
     );
   }
@@ -369,8 +377,8 @@ export class Game {
     canvas.height = size;
     const ctx = canvas.getContext('2d')!;
     ctx.clearRect(0, 0, size, size);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.lineWidth = 11;
     const step = size / 4;
     for (let i = 0; i <= 4; i++) {
       ctx.beginPath();
@@ -389,9 +397,15 @@ export class Game {
   }
 
   /** 指定サイズのネットパネル（グリッド模様の半透明面）を作る */
-  private makeNetPanel(w: number, h: number): THREE.Mesh {
+  private makeNetPanel(
+    w: number,
+    h: number,
+    segW = 1,
+    segH = 1,
+    opacity = 0.45,
+  ): THREE.Mesh {
     const tex = this.makeNetTexture();
-    const cell = 0.55; // ネットの目の大きさ（m）
+    const cell = 0.6; // ネットの目の大きさ（m）
     tex.repeat.set(
       Math.max(1, Math.round(w / cell)),
       Math.max(1, Math.round(h / cell)),
@@ -400,13 +414,14 @@ export class Game {
       map: tex,
       color: 0xffffff,
       transparent: true,
-      opacity: 0.45,
+      opacity,
       side: THREE.DoubleSide,
       alphaTest: 0.05,
       depthWrite: false,
     });
+    mat.userData.baseOpacity = opacity;
     this.netMaterials.push(mat);
-    return new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    return new THREE.Mesh(new THREE.PlaneGeometry(w, h, segW, segH), mat);
   }
 
   private setupBall(): void {
@@ -903,7 +918,12 @@ export class Game {
       const y = this.ballBody.position.y;
       const inside = Math.abs(x) < GOAL_WIDTH / 2 && y > 0 && y < GOAL_HEIGHT;
       // 枠内に入ったらネットを光らせて揺らす（ゴールを分かりやすく）
-      if (inside) this.netFlashTimer = NET_FLASH_TIME;
+      if (inside) {
+        this.netFlashTimer = NET_FLASH_TIME;
+        // 背面メッシュのローカル座標系での衝突点を記録（メッシュ中心は y=GOAL_HEIGHT/2）
+        this.netImpactX = x;
+        this.netImpactY = y - GOAL_HEIGHT / 2;
+      }
       const inTarget = this.currentTarget
         ? this.inZone(x, y, this.currentTarget)
         : false;
@@ -1021,23 +1041,50 @@ export class Game {
       }
     }
 
-    // ゴール演出：ネットを緑に光らせ、背面を奥へふくらませて揺らす
+    // ゴール演出：ネットを緑に光らせ、衝突点を中心に背面ネットを波打たせる
     if (this.netFlashTimer > 0) {
       this.netFlashTimer = Math.max(0, this.netFlashTimer - dt);
       const k = this.netFlashTimer / NET_FLASH_TIME; // 1→0
       const intensity = Math.sin(k * Math.PI); // 中盤でピーク
       for (const mat of this.netMaterials) {
         mat.color.setRGB(1 - intensity * 0.8, 1, 1 - intensity * 0.6);
-        mat.opacity = 0.45 + intensity * 0.45;
+        const base = (mat.userData.baseOpacity as number) ?? 0.45;
+        mat.opacity = base + intensity * (1 - base) * 0.9;
       }
-      // ボールが突き刺さったように背面を奥へふくらませる
-      this.netBackMesh.position.z = this.netBackBaseZ - intensity * 0.6;
+
+      // 背面ネットの頂点を変形：衝突点でくぼみ、ばね減衰で揺れ戻る
+      const elapsed = NET_FLASH_TIME - this.netFlashTimer; // 0→
+      const pos = this.netBackGeo.attributes.position;
+      const base = this.netBackBasePos;
+      const halfW = GOAL_WIDTH / 2;
+      const halfH = GOAL_HEIGHT / 2;
+      const sigma2 = 2 * 1.1 * 1.1; // くぼみの広がり
+      // 押し込み→減衰振動（ばねが戻りながら数回揺れる）
+      const spring = Math.exp(-elapsed * 6) * Math.cos(elapsed * 26);
+      for (let i = 0; i < pos.count; i++) {
+        const bx = base[i * 3];
+        const by = base[i * 3 + 1];
+        const dx = bx - this.netImpactX;
+        const dy = by - this.netImpactY;
+        const falloff = Math.exp(-(dx * dx + dy * dy) / sigma2);
+        // 枠（4辺）は固定。中央ほど大きく動くよう sin 窓で減衰
+        const edge =
+          Math.sin((Math.PI * (bx + halfW)) / GOAL_WIDTH) *
+          Math.sin((Math.PI * (by + halfH)) / GOAL_HEIGHT);
+        // 全体に広がる細かなさざ波を重ねて布っぽさを出す
+        const ripple = 0.12 * Math.sin(elapsed * 30 - (dx + dy) * 3);
+        const z = -(1.0 * falloff + ripple * falloff) * edge * spring;
+        pos.setZ(i, base[i * 3 + 2] + z);
+      }
+      pos.needsUpdate = true;
+
       if (this.netFlashTimer === 0) {
         for (const mat of this.netMaterials) {
           mat.color.setRGB(1, 1, 1);
-          mat.opacity = 0.45;
+          mat.opacity = (mat.userData.baseOpacity as number) ?? 0.45;
         }
-        this.netBackMesh.position.z = this.netBackBaseZ;
+        (pos.array as Float32Array).set(this.netBackBasePos);
+        pos.needsUpdate = true;
       }
     }
 
