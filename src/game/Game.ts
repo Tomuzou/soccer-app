@@ -16,6 +16,8 @@ const GOAL_HEIGHT = 2.44; // 実寸のゴール高さ
 const GOAL_Z = -18; // ゴールラインの位置（ボールからの距離 = 約18m）
 const POST_RADIUS = 0.06;
 const BALL_RADIUS = 0.15;
+const POST_COLOR = 0xffffff; // 通常のポスト色
+const POST_HIGHLIGHT = 0xff5a3c; // ミッション対象ポストの強調色（オレンジ赤）
 const BALL_MASS = 0.45;
 
 const MIN_SPEED = 16; // パワー0のときの初速
@@ -77,6 +79,8 @@ export class Game {
   private barBody!: CANNON.Body;
   private postLBody!: CANNON.Body;
   private postRBody!: CANNON.Body;
+  private postLMesh!: THREE.Mesh;
+  private postRMesh!: THREE.Mesh;
   private aimArrow!: THREE.ArrowHelper;
 
   // ゴールネット（見た目＋ゴール演出）
@@ -108,6 +112,9 @@ export class Game {
   private dragStartX = 0;
   private dragStartY = 0;
   private prevBallZ = 0;
+  // ポスト当たり判定（前フレーム位置→現在位置の線分でスイープ判定し、すり抜けを防ぐ）
+  private prevPostX = 0;
+  private prevPostZ = 0;
   private resultTimer = 0;
   private shotTimer = 0;
 
@@ -233,16 +240,20 @@ export class Game {
   }
 
   private setupGoal(): void {
-    const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+    const postMat = new THREE.MeshStandardMaterial({ color: POST_COLOR });
     const halfW = GOAL_WIDTH / 2;
 
-    const makePost = (x: number): CANNON.Body => {
+    // 各ポストは色を個別に変えられるよう専用マテリアルを持たせる
+    const makePost = (x: number): { body: CANNON.Body; mesh: THREE.Mesh } => {
       const geo = new THREE.CylinderGeometry(
         POST_RADIUS,
         POST_RADIUS,
         GOAL_HEIGHT,
       );
-      const mesh = new THREE.Mesh(geo, postMat);
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshStandardMaterial({ color: POST_COLOR }),
+      );
       mesh.position.set(x, GOAL_HEIGHT / 2, GOAL_Z);
       mesh.castShadow = true;
       this.scene.add(mesh);
@@ -254,12 +265,16 @@ export class Game {
       });
       body.position.set(x, GOAL_HEIGHT / 2, GOAL_Z);
       this.world.addBody(body);
-      return body;
+      return { body, mesh };
     };
 
     // 画面左（x マイナス）が左ポスト
-    this.postLBody = makePost(-halfW);
-    this.postRBody = makePost(halfW);
+    const left = makePost(-halfW);
+    const right = makePost(halfW);
+    this.postLBody = left.body;
+    this.postLMesh = left.mesh;
+    this.postRBody = right.body;
+    this.postRMesh = right.mesh;
 
     // クロスバー
     const barGeo = new THREE.CylinderGeometry(
@@ -536,6 +551,17 @@ export class Game {
     }
   }
 
+  /**
+   * 今のショットを中断して即座に蹴り直す。
+   * 壁に当たって失速したボールの停止待ち（結果表示）を飛ばすためのもの。
+   * クリア表示中は次操作を優先するため何もしない。
+   */
+  retryShot(): void {
+    if (this.state.mode === null) return;
+    if (this.state.stageCleared) return;
+    this.resetForNextShot();
+  }
+
   /** タイトル画面へ戻る */
   returnToMenu(): void {
     this.clearStageObjects();
@@ -575,6 +601,22 @@ export class Game {
       this.targetMesh = this.makeTargetMesh(stage.target);
       this.scene.add(this.targetMesh);
     }
+    // ポスト当てミッションでは対象ポストを色付けして分かりやすくする
+    this.updatePostHighlight(stage);
+  }
+
+  /** ミッション対象のポストを強調表示する（対象でなければ通常色へ戻す） */
+  private updatePostHighlight(stage: StageDefinition | null): void {
+    if (!this.postLMesh || !this.postRMesh) return;
+    const apply = (mesh: THREE.Mesh, on: boolean) => {
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      mat.color.setHex(on ? POST_HIGHLIGHT : POST_COLOR);
+      // 強調時はわずかに自己発光させて目立たせる
+      mat.emissive.setHex(on ? POST_HIGHLIGHT : 0x000000);
+      mat.emissiveIntensity = on ? 0.5 : 0;
+    };
+    apply(this.postLMesh, !!stage?.hitPostL);
+    apply(this.postRMesh, !!stage?.hitPostR);
   }
 
   private addObstacle(def: ObstacleDef): void {
@@ -776,6 +818,8 @@ export class Game {
       this.targetMesh = null;
     }
     this.currentTarget = null;
+    // ポストの強調を通常色へ戻す（フリープレイ・メニュー復帰時など）
+    this.updatePostHighlight(null);
   }
 
   // ---------------------------------------------------------------------------
@@ -879,6 +923,8 @@ export class Game {
     this.ballBody.angularVelocity.set(-dir.z * 8, spin, dir.x * 8);
 
     this.prevBallZ = this.ballBody.position.z;
+    this.prevPostX = this.ballBody.position.x;
+    this.prevPostZ = this.ballBody.position.z;
     this.shotTimer = 0;
     this.shotHitBar = false;
     this.shotHitPostL = false;
@@ -908,6 +954,52 @@ export class Game {
       y > t.y - t.h / 2 &&
       y < t.y + t.h / 2
     );
+  }
+
+  /**
+   * ポストへの接触を「前フレーム位置→現在位置」の線分でスイープ判定する。
+   * 物理エンジンの離散判定だと速いボールが細いポストをすり抜けて
+   * collide イベントが発火しないことがあるため、ミッション成立用に幾何で補完する。
+   */
+  private checkPostHits(): void {
+    if (this.shotHitPostL && this.shotHitPostR) return;
+    const by = this.ballBody.position.y;
+    const bx = this.ballBody.position.x;
+    const bz = this.ballBody.position.z;
+    // ポストの高さ範囲外（上を越えた等）は対象外
+    if (by >= -BALL_RADIUS && by <= GOAL_HEIGHT + BALL_RADIUS) {
+      const halfW = GOAL_WIDTH / 2;
+      const r = POST_RADIUS + BALL_RADIUS + 0.03; // 接触とみなす中心間距離
+      if (!this.shotHitPostL) {
+        const d = this.segPointDist2D(this.prevPostX, this.prevPostZ, bx, bz, -halfW, GOAL_Z);
+        if (d < r) this.shotHitPostL = true;
+      }
+      if (!this.shotHitPostR) {
+        const d = this.segPointDist2D(this.prevPostX, this.prevPostZ, bx, bz, halfW, GOAL_Z);
+        if (d < r) this.shotHitPostR = true;
+      }
+    }
+    this.prevPostX = bx;
+    this.prevPostZ = bz;
+  }
+
+  /** x-z 平面で線分 (ax,az)-(bx,bz) と点 (px,pz) の最短距離 */
+  private segPointDist2D(
+    ax: number,
+    az: number,
+    bx: number,
+    bz: number,
+    px: number,
+    pz: number,
+  ): number {
+    const dx = bx - ax;
+    const dz = bz - az;
+    const len2 = dx * dx + dz * dz;
+    let t = len2 > 0 ? ((px - ax) * dx + (pz - az) * dz) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * dx;
+    const cz = az + t * dz;
+    return Math.hypot(px - cx, pz - cz);
   }
 
   /** ゴールラインを跨いだ瞬間に枠内かどうか判定する */
@@ -1025,6 +1117,7 @@ export class Game {
     );
 
     if (this.state.phase === 'shooting') {
+      this.checkPostHits();
       this.checkGoalCrossing();
       // 枠を大きく外れた／止まった／飛び続けた場合のショット終了判定
       this.shotTimer += dt;

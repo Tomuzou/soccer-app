@@ -265,6 +265,26 @@
   transform: scale(0.96);
 }
 
+/* 蹴り直しボタン（メニューボタンの下） */
+.retry-btn {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top) + 44px);
+  right: calc(16px + env(safe-area-inset-right));
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(31, 111, 235, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 10px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.retry-btn:active {
+  transform: scale(0.96);
+}
+
 /* クリア／全クリアのオーバーレイ */
 .overlay {
   position: absolute;

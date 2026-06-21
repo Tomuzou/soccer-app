@@ -165,6 +165,16 @@ export default function App() {
         </button>
       )}
 
+      {/* 蹴り直しボタン（プレイ中・狙う前以外で表示。結果待ちを飛ばせる） */}
+      {playing && state.phase !== 'aiming' && !state.stageCleared && (
+        <button
+          className="retry-btn"
+          onClick={() => gameRef.current?.retryShot()}
+        >
+          ⟳ 蹴り直し
+        </button>
+      )}
+
       {/* パワー／カーブメーター（プレイ中） */}
       {playing && (
         <div className="power-meter">
