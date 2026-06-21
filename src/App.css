@@ -118,6 +118,33 @@
   width: min(80vw, 260px);
 }
 
+/* 成長過程アーカイブ（初期バージョンへのリンク） */
+.archive-link {
+  display: inline-block;
+  margin-top: 20px;
+  padding: 8px 18px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px dashed rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  text-decoration: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.archive-link:hover {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.archive-note {
+  margin: 6px 0 0;
+  color: #fff;
+  font-size: 11px;
+  opacity: 0.75;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
 /* 開発用：ステージジャンプ（DEVのみ表示） */
 .dev-jump {
   margin-top: 20px;

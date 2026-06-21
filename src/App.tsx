@@ -96,6 +96,12 @@ export default function App() {
             </button>
           </div>
 
+          {/* 成長過程アーカイブ：初めて作った頃のバージョンで遊ぶ */}
+          <a className="archive-link" href={`${import.meta.env.BASE_URL}v1/`}>
+            🕹️ 初期バージョンで遊ぶ
+          </a>
+          <p className="archive-note">最初に公開した頃の素朴な版で遊べます</p>
+
           {/* 開発時のみ：任意ステージへジャンプ（テスト用） */}
           {import.meta.env.DEV && (
             <div className="dev-jump">
