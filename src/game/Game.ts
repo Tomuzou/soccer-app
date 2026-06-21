@@ -129,7 +129,6 @@ export class Game {
   private shotHitBar = false;
   private shotHitPostL = false;
   private shotHitPostR = false;
-  private shotHitObstacle = false;
 
   // UI へ反映する状態
   private state: GameState = {
@@ -498,7 +497,7 @@ export class Game {
     this.scene.add(this.aimArrow);
   }
 
-  /** ボールが何かに衝突したとき、飛行中ならバー・ポスト・障害物への接触を記録する */
+  /** ボールが何かに衝突したとき、飛行中ならバー・ポストへの接触を記録する */
   private onBallCollide = (event: { body: CANNON.Body | null }): void => {
     if (!event.body) return;
     // ネット接触はフェーズに関係なく強く減衰させ、引っかかって進ませない
@@ -515,8 +514,6 @@ export class Game {
       this.shotHitPostL = true;
     } else if (event.body === this.postRBody) {
       this.shotHitPostR = true;
-    } else if (this.obstacleBodies.has(event.body)) {
-      this.shotHitObstacle = true;
     }
   };
 
@@ -933,7 +930,6 @@ export class Game {
     this.shotHitBar = false;
     this.shotHitPostL = false;
     this.shotHitPostR = false;
-    this.shotHitObstacle = false;
     this.aimArrow.visible = false;
     this.setPhase('shooting');
   }
@@ -1050,13 +1046,14 @@ export class Game {
     this.state.attempts += 1;
     this.state.stageAttempts += 1;
 
+    // 障害物（壁・キーパー）に触れても、ゴール条件を満たせば成功とする
+    // （実際のサッカー同様、キーパーや壁に当たって入ってもゴール）
     const success =
       (stage.requireGoal ? inside : true) &&
       (stage.target ? inTarget : true) &&
       (stage.hitBar ? this.shotHitBar : true) &&
       (stage.hitPostL ? this.shotHitPostL : true) &&
-      (stage.hitPostR ? this.shotHitPostR : true) &&
-      !this.shotHitObstacle;
+      (stage.hitPostR ? this.shotHitPostR : true);
 
     if (success) {
       // クリア表示はオーバーレイで行うため結果バナーは出さない

@@ -56,10 +56,12 @@ npm run lint     # ESLint
 - ステージは2セット：α（`STAGES_A`）/ β（`STAGES_B`）。`GameState.stageSet`（`'a'`/`'b'`）で現在セットを表す
 - モード遷移は `Game` の公開メソッド：`startFreePlay()` / `startStage(set, index)` / `nextStage()` / `returnToMenu()`
 - ステージ定義は `src/game/stages.ts` の `STAGES_A` / `STAGES_B` 配列にデータとして持つ（ミッションの追加・調整はここを編集）
-- ステージのミッション条件は `StageDefinition` のフラグの組み合わせ：`requireGoal`（枠内）/ `hitBar`（バー当て）/ `hitPostL`・`hitPostR`（左右ポスト当て）/ `target`（的・サイドネットのゾーン通過）/ `obstacles`（接触で失敗）
-- 障害物の種別：固定壁 / `move`付き（sin往復キーパー）/ `track`付き（ボールのXを追うAIキーパー）。AIキーパーは速い・カーブの効いたシュートでないと抜けない（`animate()` で追従、`track.speed` で難度調整）
+- ステージのミッション条件は `StageDefinition` のフラグの組み合わせ：`requireGoal`（枠内）/ `hitBar`（バー当て）/ `hitPostL`・`hitPostR`（左右ポスト当て）/ `target`（的・サイドネットのゾーン通過）/ `obstacles`（物理的にコースを塞ぐ障害物）
+- 障害物の種別：固定壁 / `move`付き（sin往復キーパー）/ `track`付き（ボールのXを追うAIキーパー）。AIキーパーは速い・カーブの効いたシュートでないと抜けない（`animate()` で追従、`track.speed` で難度調整）。**障害物は物理的に弾くだけで、接触自体は失敗にしない**（実サッカー同様、壁・キーパーに当たって入ってもゴール）
 - 障害物・的ゾーンはステージ切替時に `buildStageObjects` で生成、`clearStageObjects` で破棄する動的オブジェクト
-- 成功判定は `finishStageShot` に集約。バー/ポスト/障害物の接触は `ballBody` の `collide` イベント（`onBallCollide`）でショット単位のフラグに記録
+- ポスト当てミッション（`hitPostL`/`hitPostR`）では `updatePostHighlight` で対象ポストを強調色（`POST_HIGHLIGHT`）にする
+- 成功判定は `finishStageShot` に集約。バー/ポストの接触は `ballBody` の `collide` イベント（`onBallCollide`）で記録するが、ポストは細く高速シュートがすり抜けるため `checkPostHits`（前フレーム→現在の線分スイープ）でも幾何的に補完する
+- 蹴り直し：`retryShot()` は飛行中なら `finishShot(false,false)` で失敗確定してからリセットする（蹴り直しは常に1失敗としてカウント）
 - クリア中は `stageCleared` を立て、自動リセットせず次操作（`nextStage`/`returnToMenu`）を待つ
 - ステージは無制限リトライ・進捗は保存しない（常にStage1から）
 
