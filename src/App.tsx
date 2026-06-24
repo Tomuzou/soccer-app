@@ -17,9 +17,15 @@ const INITIAL_STATE: GameState = {
   stageName: '',
   mission: '',
   stageAttempts: 0,
+  shotLimit: 0,
+  shotsLeft: 0,
+  progressText: '',
   stageCleared: false,
   allCleared: false,
 };
+
+/** ステージセット記号 */
+const SET_SYMBOL: Record<'a' | 'b' | 'c', string> = { a: 'α', b: 'β', c: 'γ' };
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -94,6 +100,13 @@ export default function App() {
               ステージモード-β
               <span className="btn-badge">高難度</span>
             </button>
+            <button
+              className="menu-btn gamma"
+              onClick={() => gameRef.current?.startStage('c', 0)}
+            >
+              ステージモード-γ
+              <span className="btn-badge">球数制限</span>
+            </button>
           </div>
 
           {/* 成長過程アーカイブ：初めて作った頃のバージョンで遊ぶ */}
@@ -128,6 +141,17 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              <div className="dev-jump-row">
+                <span className="dev-jump-set">γ</span>
+                {Array.from({ length: 10 }, (_, i) => (
+                  <button
+                    key={`c${i}`}
+                    onClick={() => gameRef.current?.startStage('c', i)}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -139,12 +163,25 @@ export default function App() {
           {inStage ? (
             <div className="stage-info">
               <div className="stage-no">
-                STAGE {state.stageSet === 'b' ? 'β' : 'α'}-{state.stageIndex + 1}
+                STAGE {SET_SYMBOL[state.stageSet]}-{state.stageIndex + 1}
                 <span className="stage-total"> / {state.stageCount}</span>
               </div>
               <div className="stage-name">{state.stageName}</div>
               <div className="stage-mission">🎯 {state.mission}</div>
-              <div className="stage-attempts">挑戦 {state.stageAttempts} 回</div>
+              {state.shotLimit > 0 ? (
+                <div className="stage-limit">
+                  <span
+                    className={`shots-left${state.shotsLeft <= 1 ? ' danger' : ''}`}
+                  >
+                    ⚽ 残り {state.shotsLeft} / {state.shotLimit} 球
+                  </span>
+                  {state.progressText && (
+                    <span className="progress">📊 {state.progressText}</span>
+                  )}
+                </div>
+              ) : (
+                <div className="stage-attempts">挑戦 {state.stageAttempts} 回</div>
+              )}
             </div>
           ) : (
             <div className="scoreboard">
@@ -213,10 +250,18 @@ export default function App() {
       {state.lastResult && !state.stageCleared && (
         <div
           className={`result-banner ${
-            state.lastResult === 'goal' ? 'goal' : 'miss'
+            state.lastResult === 'goal'
+              ? 'goal'
+              : state.lastResult === 'fail'
+                ? 'fail'
+                : 'miss'
           }`}
         >
-          {state.lastResult === 'goal' ? 'GOAL! ⚽' : 'MISS…'}
+          {state.lastResult === 'goal'
+            ? 'GOAL! ⚽'
+            : state.lastResult === 'fail'
+              ? 'STAGE FAILED… 最初から'
+              : 'MISS…'}
         </div>
       )}
 

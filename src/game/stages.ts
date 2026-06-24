@@ -89,7 +89,7 @@ export const STAGES_A: StageDefinition[] = [
 ];
 
 /** AIキーパー（ボール追跡）の共通定義を作るヘルパー。サイズ・位置・担当範囲を指定可。 */
-const aiKeeper = (
+export const aiKeeper = (
   speed: number,
   opts: { x?: number; w?: number; h?: number; minX?: number; maxX?: number } = {},
 ): ObstacleDef => {
@@ -191,5 +191,126 @@ export const STAGES_B: StageDefinition[] = [
       { x: 0, y: 1.0, z: -9, w: 3.4, h: 2.0, d: 0.4 },
       aiKeeper(4.2),
     ],
+  },
+];
+
+// γ用の的ゾーン（四隅・サイド）。bingo/score で使い回す。
+const Z_TL: { x: number; y: number; w: number; h: number } = { x: -2.4, y: 1.85, w: 1.8, h: 0.95 }; // 左上
+const Z_TR: { x: number; y: number; w: number; h: number } = { x: 2.4, y: 1.85, w: 1.8, h: 0.95 }; // 右上
+const Z_BL: { x: number; y: number; w: number; h: number } = { x: -2.4, y: 0.6, w: 1.8, h: 0.95 }; // 左下
+const Z_BR: { x: number; y: number; w: number; h: number } = { x: 2.4, y: 0.6, w: 1.8, h: 0.95 }; // 右下
+
+/**
+ * ステージモード-γ（全10ステージ・球数制限チャレンジ）。
+ * 各ステージに「制限球数（shotLimit）」があり、その球数以内に累積ミッション（goal）を
+ * 達成しないと、ステージの最初（進捗ゼロ）からやり直しになる。
+ * goal の型：
+ *  - quota : 制限球内に need 回ゴール（target 指定時はその的を通すこと）
+ *  - combo : need 回連続ゴール（1球でも外すと連続カウントは0に戻る）
+ *  - bingo : zones の的をすべて1回ずつ通す
+ *  - score : zones の得点を合計 need 点ぶん稼ぐ
+ */
+export const STAGES_C: StageDefinition[] = [
+  {
+    id: 1,
+    name: 'ノルマ3本',
+    mission: '5球以内に3点決めろ！',
+    requireGoal: true,
+    shotLimit: 5,
+    goal: { type: 'quota', need: 3 },
+  },
+  {
+    id: 2,
+    name: '隅取り合戦',
+    mission: '5球以内に上の的へ3点！',
+    requireGoal: true,
+    shotLimit: 5,
+    target: { x: 2.4, y: 1.85, w: 2.2, h: 1.0 },
+    goal: { type: 'quota', need: 3 },
+  },
+  {
+    id: 3,
+    name: '連続キック',
+    mission: '4球以内に2連続ゴール！',
+    requireGoal: true,
+    shotLimit: 4,
+    goal: { type: 'combo', need: 2 },
+  },
+  {
+    id: 4,
+    name: '連続キック・壁越え',
+    mission: '6球以内に壁を越えて2連続！',
+    requireGoal: true,
+    shotLimit: 6,
+    goal: { type: 'combo', need: 2 },
+    obstacles: [{ x: 0, y: 0.95, z: -9, w: 3.2, h: 1.9, d: 0.4 }],
+  },
+  {
+    id: 5,
+    name: '四隅ビンゴ',
+    mission: '5球で四隅すべてに決めろ！',
+    requireGoal: true,
+    shotLimit: 5,
+    goal: { type: 'bingo', zones: [Z_TL, Z_TR, Z_BL, Z_BR] },
+  },
+  {
+    id: 6,
+    name: '三角ビンゴ',
+    mission: '4球で3つの的を制覇！',
+    requireGoal: true,
+    shotLimit: 4,
+    goal: { type: 'bingo', zones: [Z_TL, Z_TR, { x: 0, y: 0.6, w: 1.8, h: 0.95 }] },
+  },
+  {
+    id: 7,
+    name: 'スコアアタック',
+    mission: '5球で12点を稼げ（隅ほど高得点）！',
+    requireGoal: true,
+    shotLimit: 5,
+    goal: {
+      type: 'score',
+      need: 12,
+      zones: [
+        { ...Z_TL, points: 5 },
+        { ...Z_TR, points: 5 },
+        { x: 0, y: 1.2, w: 2.2, h: 1.6, points: 2 }, // 中央は低得点
+      ],
+    },
+  },
+  {
+    id: 8,
+    name: 'ノーミス3本',
+    mission: '3球すべてゴール！1球も外すな！',
+    requireGoal: true,
+    shotLimit: 3,
+    goal: { type: 'quota', need: 3 }, // 制限=ノルマ＝1球も外せない
+    obstacles: [{ x: 0, y: 0.9, z: -10, w: 4.0, h: 2.0, d: 0.4 }],
+  },
+  {
+    id: 9,
+    name: 'キーパー越え4本',
+    mission: '6球以内にAIキーパーを抜いて4点！',
+    requireGoal: true,
+    shotLimit: 6,
+    goal: { type: 'quota', need: 4 },
+    obstacles: [aiKeeper(3.6)],
+  },
+  {
+    id: 10,
+    name: 'ファイナル・スコアアタック',
+    mission: '6球で15点！壁とキーパーを越えて隅へ！',
+    requireGoal: true,
+    shotLimit: 6,
+    goal: {
+      type: 'score',
+      need: 15,
+      zones: [
+        { ...Z_TL, points: 6 },
+        { ...Z_TR, points: 6 },
+        { ...Z_BL, points: 4 },
+        { ...Z_BR, points: 4 },
+      ],
+    },
+    obstacles: [{ x: 0, y: 1.0, z: -9, w: 3.2, h: 1.9, d: 0.4 }, aiKeeper(3.8)],
   },
 ];

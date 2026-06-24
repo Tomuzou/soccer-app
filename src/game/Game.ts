@@ -5,10 +5,12 @@ import type {
   GamePhase,
   GameState,
   ObstacleDef,
+  ScoreZone,
   StageDefinition,
+  StageGoal,
   TargetZone,
 } from '../types';
-import { STAGES_A, STAGES_B } from './stages';
+import { STAGES_A, STAGES_B, STAGES_C } from './stages';
 
 // --- ゲーム定数（単位はメートル） ---
 const GOAL_WIDTH = 7.32; // 実寸のゴール幅
@@ -125,6 +127,20 @@ export class Game {
   private targetMesh: THREE.Mesh | null = null;
   private currentTarget: TargetZone | null = null;
 
+  // γ（球数制限チャレンジ）の累積進捗
+  private stageGoal: StageGoal | null = null;
+  /** quota=ゴール数 / combo=現在の連続数 / score=累積点（bingoは未使用） */
+  private goalProgress = 0;
+  /** bingo/score 用の判定ゾーンと、対応する表示メッシュ */
+  private goalZones: TargetZone[] = [];
+  private goalZoneMeshes: THREE.Mesh[] = [];
+  /** スコアゾーンの点数スプライト */
+  private scoreLabels: THREE.Sprite[] = [];
+  /** bingo 用：各ゾーンを達成済みか */
+  private bingoHit: boolean[] = [];
+  /** 制限球を使い切って失敗 → 結果表示後にステージ先頭へ戻すフラグ */
+  private stageFailPending = false;
+
   // 飛行中の接触フラグ（ショットごとにリセット）
   private shotHitBar = false;
   private shotHitPostL = false;
@@ -145,6 +161,9 @@ export class Game {
     stageName: '',
     mission: '',
     stageAttempts: 0,
+    shotLimit: 0,
+    shotsLeft: 0,
+    progressText: '',
     stageCleared: false,
     allCleared: false,
   };
@@ -532,9 +551,9 @@ export class Game {
     this.resetForNextShot();
   }
 
-  /** ステージモードを開始する（set='a'=α / 'b'=β、既定は最初のステージ） */
-  startStage(set: 'a' | 'b', index = 0): void {
-    this.stages = set === 'b' ? STAGES_B : STAGES_A;
+  /** ステージモードを開始する（set='a'=α / 'b'=β / 'c'=γ、既定は最初のステージ） */
+  startStage(set: 'a' | 'b' | 'c', index = 0): void {
+    this.stages = set === 'c' ? STAGES_C : set === 'b' ? STAGES_B : STAGES_A;
     this.state.stageSet = set;
     this.state.stageCount = this.stages.length;
     this.loadStage(index);
@@ -559,7 +578,9 @@ export class Game {
     if (this.state.mode === null) return;
     if (this.state.stageCleared) return;
     // phase が 'shooting' のときだけ失敗として計上される（finishShot 内のガード）
-    this.finishShot(false, false);
+    this.finishShot(false, false, 0, 0);
+    // 制限球切れでステージ失敗が確定した場合はリセットせず、結果表示→先頭戻しに任せる
+    if (this.stageFailPending) return;
     this.resetForNextShot();
   }
 
@@ -588,8 +609,35 @@ export class Game {
     this.state.stageAttempts = 0;
     this.state.stageCleared = false;
     this.state.allCleared = false;
+    // γ：累積ミッションと球数制限を初期化
+    this.stageGoal = stage.goal ?? null;
+    this.goalProgress = 0;
+    this.bingoHit = [];
+    this.stageFailPending = false;
+    this.state.shotLimit = stage.shotLimit ?? 0;
+    this.state.shotsLeft = stage.shotLimit ?? 0;
+    this.updateProgressText();
     this.buildStageObjects(stage);
     this.resetForNextShot();
+  }
+
+  /** 累積ミッションの進捗テキストを state に反映する（HUD表示用） */
+  private updateProgressText(): void {
+    const g = this.stageGoal;
+    if (!g) {
+      this.state.progressText = '';
+      return;
+    }
+    if (g.type === 'quota') {
+      this.state.progressText = `${this.goalProgress} / ${g.need} ゴール`;
+    } else if (g.type === 'combo') {
+      this.state.progressText = `連続 ${this.goalProgress} / ${g.need}`;
+    } else if (g.type === 'bingo') {
+      const hit = this.bingoHit.filter(Boolean).length;
+      this.state.progressText = `${hit} / ${g.zones.length} 的`;
+    } else {
+      this.state.progressText = `${this.goalProgress} / ${g.need} 点`;
+    }
   }
 
   /** ステージ定義から障害物・ターゲットゾーンを生成する */
@@ -602,8 +650,57 @@ export class Game {
       this.targetMesh = this.makeTargetMesh(stage.target);
       this.scene.add(this.targetMesh);
     }
+    // γ：bingo/score の判定ゾーンを生成して色分け表示する
+    if (stage.goal?.type === 'bingo' || stage.goal?.type === 'score') {
+      this.goalZones = stage.goal.zones;
+      this.bingoHit = this.goalZones.map(() => false);
+      // bingo は zone と mesh が 1:1 で並ぶ（達成時に該当 mesh を緑へ変える）
+      for (const zone of this.goalZones) {
+        const color =
+          stage.goal.type === 'score'
+            ? this.scoreZoneColor((zone as ScoreZone).points)
+            : 0xff3355;
+        const mesh = this.makeTargetMesh(zone, color, 0.32);
+        this.goalZoneMeshes.push(mesh);
+        this.scene.add(mesh);
+      }
+      // スコアゾーンは点数の表示札を別レイヤーで添える
+      if (stage.goal.type === 'score') {
+        for (const zone of this.goalZones) {
+          const label = this.makeScoreLabel((zone as ScoreZone).points, zone);
+          this.scene.add(label);
+          this.scoreLabels.push(label);
+        }
+      }
+    }
     // ポスト当てミッションでは対象ポストを色付けして分かりやすくする
     this.updatePostHighlight(stage);
+  }
+
+  /** スコアゾーンの得点に応じた色（高得点ほど金〜赤、低得点は青寄り） */
+  private scoreZoneColor(points: number): number {
+    if (points >= 6) return 0xff3355; // 高得点：赤
+    if (points >= 4) return 0xffaa22; // 中得点：オレンジ
+    return 0x3399ff; // 低得点：青
+  }
+
+  /** スコアゾーンの得点を示す数字スプライトを作る */
+  private makeScoreLabel(points: number, zone: TargetZone): THREE.Sprite {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 88px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${points}`, 64, 70);
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.set(zone.x, zone.y, GOAL_Z + 0.1);
+    sprite.scale.set(0.7, 0.7, 0.7);
+    return sprite;
   }
 
   /** ミッション対象のポストを強調表示する（対象でなければ通常色へ戻す） */
@@ -778,12 +875,12 @@ export class Game {
     mo.mesh.position.x = cx;
   }
 
-  private makeTargetMesh(target: TargetZone): THREE.Mesh {
+  private makeTargetMesh(target: TargetZone, color = 0xff3355, opacity = 0.35): THREE.Mesh {
     const geo = new THREE.PlaneGeometry(target.w, target.h);
     const mat = new THREE.MeshBasicMaterial({
-      color: 0xff3355,
+      color,
       transparent: true,
-      opacity: 0.35,
+      opacity,
       side: THREE.DoubleSide,
     });
     const mesh = new THREE.Mesh(geo, mat);
@@ -819,6 +916,21 @@ export class Game {
       this.targetMesh = null;
     }
     this.currentTarget = null;
+    // γ：複数ゾーン（bingo/score）メッシュと点数札を破棄
+    for (const mesh of this.goalZoneMeshes) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    this.goalZoneMeshes = [];
+    for (const sprite of this.scoreLabels) {
+      this.scene.remove(sprite);
+      sprite.material.map?.dispose();
+      sprite.material.dispose();
+    }
+    this.scoreLabels = [];
+    this.goalZones = [];
+    this.stageGoal = null;
     // ポストの強調を通常色へ戻す（フリープレイ・メニュー復帰時など）
     this.updatePostHighlight(null);
   }
@@ -1019,16 +1131,16 @@ export class Game {
       const inTarget = this.currentTarget
         ? this.inZone(x, y, this.currentTarget)
         : false;
-      this.finishShot(inside, inTarget);
+      this.finishShot(inside, inTarget, x, y);
     }
     this.prevBallZ = z;
   }
 
-  /** ショット終了。inside=枠内通過, inTarget=ターゲット通過 */
-  private finishShot(inside: boolean, inTarget: boolean): void {
+  /** ショット終了。inside=枠内通過, inTarget=ターゲット通過, (x,y)=ゴール面通過点 */
+  private finishShot(inside: boolean, inTarget: boolean, x = 0, y = 0): void {
     if (this.state.phase !== 'shooting') return;
     if (this.state.mode === 'stage') {
-      this.finishStageShot(inside, inTarget);
+      this.finishStageShot(inside, inTarget, x, y);
       return;
     }
     // フリープレイ
@@ -1041,11 +1153,18 @@ export class Game {
   }
 
   /** ステージモードのショット評価。条件をすべて満たせばクリア */
-  private finishStageShot(inside: boolean, inTarget: boolean): void {
+  private finishStageShot(inside: boolean, inTarget: boolean, x = 0, y = 0): void {
     const stage = this.stages[this.state.stageIndex];
     this.state.attempts += 1;
     this.state.stageAttempts += 1;
 
+    // γ（球数制限・累積ミッション）はこちらで処理
+    if (this.stageGoal) {
+      this.finishGoalShot(stage, inside, inTarget, x, y);
+      return;
+    }
+
+    // --- 従来の単発判定（α/β） ---
     // 障害物（壁・キーパー）に触れても、ゴール条件を満たせば成功とする
     // （実際のサッカー同様、キーパーや壁に当たって入ってもゴール）
     const success =
@@ -1067,6 +1186,108 @@ export class Game {
       this.resultTimer = 1.5;
     }
     this.setPhase('result');
+  }
+
+  /**
+   * γ：累積ミッション1球ぶんの評価。
+   * 進捗を更新し、達成ならクリア／球切れで未達ならステージ失敗（先頭へ戻す）。
+   */
+  private finishGoalShot(
+    stage: StageDefinition,
+    inside: boolean,
+    inTarget: boolean,
+    x: number,
+    y: number,
+  ): void {
+    const goal = this.stageGoal!;
+    // この1球が「カウントされた」か（成功フィードバック用）
+    let counted = false;
+
+    if (goal.type === 'quota' || goal.type === 'combo') {
+      // 基本成功＝枠内通過（的指定があればその的も通すこと）
+      const ok = inside && (stage.target ? inTarget : true);
+      if (ok) {
+        this.goalProgress += 1;
+        counted = true;
+      } else if (goal.type === 'combo') {
+        this.goalProgress = 0; // 連続が途切れる
+      }
+    } else if (goal.type === 'bingo') {
+      if (inside) {
+        this.goalZones.forEach((zone, i) => {
+          if (!this.bingoHit[i] && this.inZone(x, y, zone)) {
+            this.bingoHit[i] = true;
+            counted = true;
+            this.markBingoZone(i);
+          }
+        });
+      }
+    } else {
+      // score：ヒットしたゾーンの最高点を加算
+      if (inside) {
+        let best = 0;
+        for (const zone of this.goalZones) {
+          const pts = (zone as ScoreZone).points;
+          if (pts > best && this.inZone(x, y, zone)) best = pts;
+        }
+        if (best > 0) {
+          this.goalProgress += best;
+          counted = true;
+        }
+      }
+    }
+
+    // 達成判定
+    let cleared = false;
+    if (goal.type === 'quota') cleared = this.goalProgress >= goal.need;
+    else if (goal.type === 'combo') cleared = this.goalProgress >= goal.need;
+    else if (goal.type === 'bingo') cleared = this.bingoHit.every(Boolean);
+    else cleared = this.goalProgress >= goal.need;
+
+    this.state.shotsLeft = Math.max(0, this.state.shotLimit - this.state.stageAttempts);
+    this.updateProgressText();
+
+    // 残り球で達成しきれない（数学的に不可能になった）かどうか
+    const impossible = !cleared && this.minShotsNeeded(goal) > this.state.shotsLeft;
+
+    if (cleared) {
+      this.state.lastResult = null;
+      this.state.stageCleared = true;
+      if (this.state.stageIndex >= this.stages.length - 1) {
+        this.state.allCleared = true;
+      }
+    } else if (impossible) {
+      // 球切れ／達成不能 → ステージ最初からやり直し
+      this.state.lastResult = 'fail';
+      this.stageFailPending = true;
+      this.resultTimer = 2.0;
+    } else {
+      this.state.lastResult = counted ? 'goal' : 'miss';
+      this.resultTimer = 1.2;
+    }
+    this.setPhase('result');
+  }
+
+  /** 残りミッションを達成するのに最低あと何球必要か（これが残り球を超えたら失敗確定） */
+  private minShotsNeeded(goal: StageGoal): number {
+    if (goal.type === 'quota' || goal.type === 'combo') {
+      return Math.max(0, goal.need - this.goalProgress);
+    }
+    if (goal.type === 'bingo') {
+      return this.bingoHit.filter((h) => !h).length;
+    }
+    // score：1球で稼げる最高点で割って切り上げ
+    const maxPts = Math.max(...goal.zones.map((z) => z.points));
+    return Math.ceil(Math.max(0, goal.need - this.goalProgress) / maxPts);
+  }
+
+  /** bingo：達成したゾーンのメッシュを緑（クリア色）へ変える */
+  private markBingoZone(index: number): void {
+    const mesh = this.goalZoneMeshes[index];
+    if (!mesh) return;
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    mat.color.setHex(0x22cc66);
+    mat.opacity = 0.5;
   }
 
   private setPhase(phase: GamePhase): void {
@@ -1186,7 +1407,13 @@ export class Game {
     if (this.state.phase === 'result' && !this.state.stageCleared) {
       this.resultTimer -= dt;
       if (this.resultTimer <= 0) {
-        this.resetForNextShot();
+        if (this.stageFailPending) {
+          // γ：制限球切れ → ステージ最初から（進捗ゼロでやり直し）
+          this.stageFailPending = false;
+          this.loadStage(this.state.stageIndex);
+        } else {
+          this.resetForNextShot();
+        }
       }
     }
 

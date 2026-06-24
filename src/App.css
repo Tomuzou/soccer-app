@@ -81,6 +81,35 @@
   margin-top: 4px;
 }
 
+/* γ：球数制限・進捗表示 */
+.stage-limit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stage-limit .shots-left {
+  color: #93c5fd;
+}
+
+.stage-limit .shots-left.danger {
+  color: #f87171;
+  animation: blink 0.8s steps(2, start) infinite;
+}
+
+.stage-limit .progress {
+  color: #fde047;
+}
+
+@keyframes blink {
+  to {
+    opacity: 0.35;
+  }
+}
+
 /* タイトル画面 */
 .title-screen {
   position: absolute;
@@ -229,6 +258,21 @@
 
 .menu-btn.beta:hover {
   background: linear-gradient(90deg, #fb5168, #d11d1d);
+}
+
+.menu-btn.gamma {
+  position: relative;
+  background: linear-gradient(90deg, #8b5cf6, #6d28d9);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.menu-btn.gamma:hover {
+  background: linear-gradient(90deg, #9d6dfb, #7c33e8);
+}
+
+.menu-btn.gamma .btn-badge {
+  color: #6d28d9;
+  background: #c4b5fd;
 }
 
 .btn-badge {
@@ -445,6 +489,12 @@
 
 .result-banner.miss {
   color: #f87171;
+}
+
+.result-banner.fail {
+  color: #fb7185;
+  font-size: 36px;
+  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
 }
 
 @keyframes pop {
