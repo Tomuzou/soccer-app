@@ -6,4 +6,15 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ command }) => ({
   base: command === 'build' ? '/soccer-app/' : '/',
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        // 大きなライブラリはアプリ本体と分けてキャッシュ効率を上げる
+        manualChunks: {
+          three: ['three'],
+          physics: ['cannon-es'],
+        },
+      },
+    },
+  },
 }));

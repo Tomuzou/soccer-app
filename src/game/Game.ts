@@ -8,9 +8,11 @@ import type {
   ScoreZone,
   StageDefinition,
   StageGoal,
+  StageSet,
   TargetZone,
 } from '../types';
-import { STAGES_A, STAGES_B, STAGES_C } from './stages';
+import { STAGES_A, STAGES_B, STAGES_C, STAGES_D } from './stages';
+import { Sfx } from './sfx';
 
 // --- ゲーム定数（単位はメートル） ---
 const GOAL_WIDTH = 7.32; // 実寸のゴール幅
@@ -20,7 +22,7 @@ const POST_RADIUS = 0.06;
 const BALL_RADIUS = 0.15;
 const POST_COLOR = 0xffffff; // 通常のポスト色
 const POST_HIGHLIGHT = 0xff5a3c; // ミッション対象ポストの強調色（オレンジ赤）
-const BALL_MASS = 0.45;
+const BALL_MASS = 0.43; // FIFA規定球の質量（kg）
 
 const MIN_SPEED = 16; // パワー0のときの初速
 const MAX_SPEED = 30; // パワー1のときの初速
@@ -28,8 +30,23 @@ const MAX_YAW = THREE.MathUtils.degToRad(30); // 左右の最大振り角
 const BASE_PITCH = THREE.MathUtils.degToRad(8); // 最低仰角
 const MAX_PITCH = THREE.MathUtils.degToRad(40); // 最大仰角
 
-const MAX_CURVE_SPIN = 60; // カーブ時の最大スピン（rad/s）
-const MAGNUS_COEF = 0.008; // マグヌス力の係数（曲がり具合・やや強め）
+const MAX_CURVE_SPIN = 64; // カーブ時の最大スピン（rad/s ≒ 610rpm・強烈なサイドスピン）
+
+// --- 空力（実測値に基づいてリアルな弾道を再現する） ---
+const AIR_DENSITY = 1.225; // 空気密度（kg/m³）
+const BALL_AERO_RADIUS = 0.11; // 空力計算に使う実球の半径（描画半径は視認性優先で別）
+const BALL_CROSS_SECTION = Math.PI * BALL_AERO_RADIUS * BALL_AERO_RADIUS;
+const DRAG_COEF = 0.22; // 高速域（乱流域）のサッカーボールの抗力係数
+/** 空気抵抗 F = -DRAG_K・|v_rel|・v_rel（v_rel は風を差し引いた対気速度） */
+const DRAG_K = 0.5 * AIR_DENSITY * DRAG_COEF * BALL_CROSS_SECTION;
+/** マグヌス力 F = MAGNUS_COEF・(ω × v_rel)。実際のFKの曲がり幅（〜2.5m）に合わせた値 */
+const MAGNUS_COEF = 0.0026;
+/** 芝の転がり抵抗係数（地面を転がるボールの自然な減速） */
+const ROLL_RESIST = 0.07;
+/** 移動の減衰はごく小さく（減速の主体は上の空気抵抗と転がり抵抗が担う） */
+const FLIGHT_LINEAR_DAMPING = 0.01;
+/** スピンの空気減衰（実球の回転は飛行中ほとんど落ちない） */
+const FLIGHT_ANGULAR_DAMPING = 0.08;
 
 const MAX_SHOT_TIME = 6; // 1ショットの最大飛行時間（秒）。跳ね返り続けを強制終了する保険
 
@@ -99,6 +116,18 @@ export class Game {
   private ballPhysMat = new CANNON.Material('ball');
   private netPhysMat = new CANNON.Material('net');
   private postPhysMat = new CANNON.Material('post');
+  private groundPhysMat = new CANNON.Material('ground');
+  private groundBody!: CANNON.Body;
+
+  /** 効果音（WebAudio合成） */
+  private sfx = new Sfx();
+
+  // 現在ステージの風速（m/s）。飛行中の空力計算に対気速度として入る
+  private windX = 0;
+  private windZ = 0;
+
+  /** カメラの注視点（飛行中はボールを緩やかに追う） */
+  private camLook = new THREE.Vector3(0, 1, GOAL_Z);
 
   /** 現在のステージセット */
   private stages: StageDefinition[] = STAGES_A;
@@ -166,6 +195,8 @@ export class Game {
     progressText: '',
     stageCleared: false,
     allCleared: false,
+    windX: 0,
+    windZ: 0,
   };
 
   constructor(container: HTMLElement, callbacks: GameCallbacks) {
@@ -236,25 +267,130 @@ export class Game {
   }
 
   private setupGround(): void {
+    // 刈り込みストライプの入った芝生
+    const tex = this.makeGrassTexture();
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(1, 8); // 80m を 8タイル ＝ 5m 幅のストライプ
+    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
     const geo = new THREE.PlaneGeometry(60, 80);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x2e8b2e });
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = -Math.PI / 2;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
 
-    // 簡易のサイドライン的なグリッド
-    const grid = new THREE.GridHelper(60, 30, 0x55aa55, 0x55aa55);
-    (grid.material as THREE.Material).opacity = 0.4;
-    (grid.material as THREE.Material).transparent = true;
-    this.scene.add(grid);
+    this.addPitchMarkings();
+    this.addSurroundings();
 
-    const groundBody = new CANNON.Body({
+    this.groundBody = new CANNON.Body({
       mass: 0,
       shape: new CANNON.Plane(),
+      material: this.groundPhysMat,
     });
-    groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-    this.world.addBody(groundBody);
+    this.groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    this.world.addBody(this.groundBody);
+
+    // ボールと芝：整備された天然芝のバウンド（e≒0.65）とグリップ
+    this.world.addContactMaterial(
+      new CANNON.ContactMaterial(this.ballPhysMat, this.groundPhysMat, {
+        restitution: 0.65,
+        friction: 0.4,
+      }),
+    );
+  }
+
+  /** 濃淡2色の刈り込みストライプ＋粒状ノイズの芝テクスチャを生成する */
+  private makeGrassTexture(): THREE.CanvasTexture {
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    // 上半分＝明るい芝、下半分＝暗い芝（1タイルでストライプ1対）
+    ctx.fillStyle = '#3f9b3f';
+    ctx.fillRect(0, 0, size, size / 2);
+    ctx.fillStyle = '#368736';
+    ctx.fillRect(0, size / 2, size, size / 2);
+    // 芝の粒感（ランダムな明暗の点を散らす）
+    for (let i = 0; i < 1600; i++) {
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      const light = Math.random() > 0.5;
+      ctx.fillStyle = light ? 'rgba(255,255,255,0.05)' : 'rgba(0,40,0,0.07)';
+      ctx.fillRect(x, y, 2, 2);
+    }
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  /** ピッチの白線（ゴールライン・ペナルティエリア・ゴールエリア・PKスポット・アーク）を実寸で描く */
+  private addPitchMarkings(): void {
+    const LINE_W = 0.12;
+    const lineMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.85,
+    });
+    // 芝の上にわずかに浮かせた白い帯を置く（cx,cz=中心、w=X幅、d=Z奥行き）
+    const addLine = (cx: number, cz: number, w: number, d: number): void => {
+      const line = new THREE.Mesh(new THREE.PlaneGeometry(w, d), lineMat);
+      line.rotation.x = -Math.PI / 2;
+      line.position.set(cx, 0.012, cz);
+      this.scene.add(line);
+    };
+
+    const paHalfW = 40.32 / 2; // ペナルティエリア幅の半分（16.5m×2＋ゴール幅）
+    const paFront = GOAL_Z + 16.5;
+    const gaHalfW = 18.32 / 2; // ゴールエリア幅の半分（5.5m×2＋ゴール幅）
+    const gaFront = GOAL_Z + 5.5;
+
+    addLine(0, GOAL_Z, 50, LINE_W); // ゴールライン
+    addLine(0, paFront, paHalfW * 2, LINE_W); // ペナルティエリア前線
+    addLine(-paHalfW, (GOAL_Z + paFront) / 2, LINE_W, 16.5); // 同・左側線
+    addLine(paHalfW, (GOAL_Z + paFront) / 2, LINE_W, 16.5); // 同・右側線
+    addLine(0, gaFront, gaHalfW * 2, LINE_W); // ゴールエリア前線
+    addLine(-gaHalfW, (GOAL_Z + gaFront) / 2, LINE_W, 5.5); // 同・左側線
+    addLine(gaHalfW, (GOAL_Z + gaFront) / 2, LINE_W, 5.5); // 同・右側線
+
+    // ペナルティスポット（ゴールラインから11m）
+    const spotZ = GOAL_Z + 11;
+    const spot = new THREE.Mesh(new THREE.CircleGeometry(0.14, 24), lineMat);
+    spot.rotation.x = -Math.PI / 2;
+    spot.position.set(0, 0.012, spotZ);
+    this.scene.add(spot);
+
+    // ペナルティアーク（スポット中心の半径9.15mのうちエリア外に出る弧）
+    // 回転（rotation.x=-π/2）でローカル+Yがワールド-Zへ写るため、
+    // ワールドZ > paFront ⇔ sinθ < -(16.5-11)/9.15 となる区間を切り出す
+    const a = Math.asin((16.5 - 11) / 9.15);
+    const arc = new THREE.Mesh(
+      new THREE.RingGeometry(9.15 - LINE_W / 2, 9.15 + LINE_W / 2, 48, 1, Math.PI + a, Math.PI - 2 * a),
+      lineMat,
+    );
+    arc.rotation.x = -Math.PI / 2;
+    arc.position.set(0, 0.012, spotZ);
+    this.scene.add(arc);
+  }
+
+  /** スタジアムの雰囲気づくり（ゴール裏の広告ボードと遠景のスタンド） */
+  private addSurroundings(): void {
+    const boardColors = [0x1f6feb, 0xe11d48, 0xf5f5f5, 0x0ea55e, 0xf5a623, 0x1f6feb];
+    boardColors.forEach((color, i) => {
+      const board = new THREE.Mesh(
+        new THREE.BoxGeometry(5.9, 0.9, 0.15),
+        new THREE.MeshStandardMaterial({ color }),
+      );
+      board.position.set(-15 + i * 6, 0.45, GOAL_Z - 3.4);
+      board.castShadow = true;
+      this.scene.add(board);
+    });
+
+    // 遠景のメインスタンド（フォグに霞ませて奥行きを出す）
+    const stand = new THREE.Mesh(
+      new THREE.BoxGeometry(56, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0x5b6272 }),
+    );
+    stand.position.set(0, 4, GOAL_Z - 14);
+    this.scene.add(stand);
   }
 
   private setupGoal(): void {
@@ -349,6 +485,39 @@ export class Game {
     top.position.set(0, GOAL_HEIGHT, GOAL_Z - NET_DEPTH / 2);
     this.scene.add(top);
 
+    // ネットを張る後方フレーム（クロスバー両端→後方地面への支柱と、後方の地面バー）
+    const addTube = (from: THREE.Vector3, to: THREE.Vector3, r: number): void => {
+      const dir = new THREE.Vector3().subVectors(to, from);
+      const len = dir.length();
+      const tube = new THREE.Mesh(
+        new THREE.CylinderGeometry(r, r, len, 8),
+        new THREE.MeshStandardMaterial({ color: POST_COLOR }),
+      );
+      tube.position.copy(from).addScaledVector(dir, 0.5);
+      tube.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        dir.normalize(),
+      );
+      tube.castShadow = true;
+      this.scene.add(tube);
+    };
+    const backZ2 = GOAL_Z - NET_DEPTH;
+    addTube(
+      new THREE.Vector3(-halfW, GOAL_HEIGHT, GOAL_Z),
+      new THREE.Vector3(-halfW, 0.04, backZ2),
+      POST_RADIUS * 0.7,
+    );
+    addTube(
+      new THREE.Vector3(halfW, GOAL_HEIGHT, GOAL_Z),
+      new THREE.Vector3(halfW, 0.04, backZ2),
+      POST_RADIUS * 0.7,
+    );
+    addTube(
+      new THREE.Vector3(-halfW, 0.04, backZ2),
+      new THREE.Vector3(halfW, 0.04, backZ2),
+      POST_RADIUS * 0.7,
+    );
+
     // --- ネットの当たり判定（薄い静的ボックスでボールを受け止める） ---
     const midZ = GOAL_Z - NET_DEPTH / 2;
     const t = 0.04; // 板の薄さ
@@ -374,13 +543,16 @@ export class Game {
         friction: 0.9,
       }),
     );
-    // ボールとバー・ポストは高反発（カキーンと弾く）
+    // ボールとバー・ポストは金属らしい高めの反発（実測のポスト跳ね返りに近い値）
     this.world.addContactMaterial(
       new CANNON.ContactMaterial(this.ballPhysMat, this.postPhysMat, {
-        restitution: 0.95,
-        friction: 0.05,
+        restitution: 0.8,
+        friction: 0.1,
       }),
     );
+    // 壁・キーパーなど材質未指定の物体との接触（人体・壁に当たった鈍い跳ね返り）
+    this.world.defaultContactMaterial.restitution = 0.45;
+    this.world.defaultContactMaterial.friction = 0.3;
   }
 
   /** ネットの当たり判定ボックスを1枚追加する */
@@ -470,8 +642,8 @@ export class Game {
     this.ballBody = new CANNON.Body({
       mass: BALL_MASS,
       shape: new CANNON.Sphere(BALL_RADIUS),
-      linearDamping: 0.2,
-      angularDamping: 0.2,
+      linearDamping: FLIGHT_LINEAR_DAMPING,
+      angularDamping: FLIGHT_ANGULAR_DAMPING,
       material: this.ballPhysMat,
     });
     this.ballBody.addEventListener('collide', this.onBallCollide);
@@ -480,26 +652,43 @@ export class Game {
     this.resetBall();
   }
 
-  /** 回転が見えるよう、白地に黒い斑点を描いたテクスチャを生成する */
+  /** 白地に黒の五角形パネルを並べた、伝統的なサッカーボール模様のテクスチャを生成する */
   private makeBallTexture(): THREE.CanvasTexture {
-    const size = 128;
+    const size = 256;
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = size;
     const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#fafafa';
     ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = '#222222';
-    const spots: [number, number, number][] = [
-      [30, 30, 16],
-      [96, 38, 13],
-      [64, 74, 18],
-      [22, 92, 12],
-      [108, 100, 14],
-    ];
-    for (const [x, y, r] of spots) {
+
+    const drawPentagon = (cx: number, cy: number, r: number, rot: number): void => {
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
+      for (let i = 0; i < 5; i++) {
+        const ang = rot + (i * 2 * Math.PI) / 5 - Math.PI / 2;
+        const px = cx + Math.cos(ang) * r;
+        const py = cy + Math.sin(ang) * r;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
       ctx.fill();
+      ctx.stroke();
+    };
+
+    ctx.fillStyle = '#161616';
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; // パネルの縫い目風の縁取り
+    ctx.lineWidth = 4;
+    // 千鳥配置で並べる（テクスチャは球にラップされるので端で切れても目立たない）
+    const cells: [number, number, number][] = [
+      [32, 36, 0.2],
+      [160, 32, 0.9],
+      [96, 128, 0.5],
+      [224, 124, 1.4],
+      [32, 220, 1.0],
+      [160, 224, 0.3],
+    ];
+    for (const [x, y, rot] of cells) {
+      drawPentagon(x, y, 27, rot);
     }
     return new THREE.CanvasTexture(canvas);
   }
@@ -516,15 +705,30 @@ export class Game {
     this.scene.add(this.aimArrow);
   }
 
-  /** ボールが何かに衝突したとき、飛行中ならバー・ポストへの接触を記録する */
-  private onBallCollide = (event: { body: CANNON.Body | null }): void => {
+  /** ボールが何かに衝突したとき、効果音を鳴らし、飛行中ならバー・ポストへの接触を記録する */
+  private onBallCollide = (event: {
+    body: CANNON.Body | null;
+    contact?: CANNON.ContactEquation;
+  }): void => {
     if (!event.body) return;
+    // 衝突の強さ（法線方向の相対速度）。効果音の音量・省略判定に使う
+    const impact = Math.abs(event.contact?.getImpactVelocityAlongNormal() ?? 0);
     // ネット接触はフェーズに関係なく強く減衰させ、引っかかって進ませない
     // （ゴール判定はライン通過時に確定し phase は既に 'result' になっているため）
     if (this.netBodies.has(event.body)) {
       this.ballBody.linearDamping = 0.9;
       this.ballBody.angularDamping = 0.9;
+      if (impact > 2) this.sfx.net();
       return;
+    }
+    const isFrame =
+      event.body === this.barBody ||
+      event.body === this.postLBody ||
+      event.body === this.postRBody;
+    if (isFrame) {
+      if (impact > 1.5) this.sfx.post();
+    } else if (event.body === this.groundBody || this.obstacleBodies.has(event.body)) {
+      this.sfx.bounce(impact / 12);
     }
     if (this.state.phase !== 'shooting') return;
     if (event.body === this.barBody) {
@@ -543,6 +747,7 @@ export class Game {
   /** フリープレイを開始する */
   startFreePlay(): void {
     this.clearStageObjects();
+    this.setWind(0, 0);
     this.state.mode = 'free';
     this.state.score = 0;
     this.state.attempts = 0;
@@ -551,9 +756,15 @@ export class Game {
     this.resetForNextShot();
   }
 
-  /** ステージモードを開始する（set='a'=α / 'b'=β / 'c'=γ、既定は最初のステージ） */
-  startStage(set: 'a' | 'b' | 'c', index = 0): void {
-    this.stages = set === 'c' ? STAGES_C : set === 'b' ? STAGES_B : STAGES_A;
+  /** ステージモードを開始する（set='a'=α / 'b'=β / 'c'=γ / 'd'=δ、既定は最初のステージ） */
+  startStage(set: StageSet, index = 0): void {
+    const sets: Record<StageSet, StageDefinition[]> = {
+      a: STAGES_A,
+      b: STAGES_B,
+      c: STAGES_C,
+      d: STAGES_D,
+    };
+    this.stages = sets[set];
     this.state.stageSet = set;
     this.state.stageCount = this.stages.length;
     this.loadStage(index);
@@ -587,6 +798,7 @@ export class Game {
   /** タイトル画面へ戻る */
   returnToMenu(): void {
     this.clearStageObjects();
+    this.setWind(0, 0);
     this.dragging = false;
     this.state.mode = null;
     this.state.lastResult = null;
@@ -616,9 +828,19 @@ export class Game {
     this.stageFailPending = false;
     this.state.shotLimit = stage.shotLimit ?? 0;
     this.state.shotsLeft = stage.shotLimit ?? 0;
+    // δ：ステージの風を設定（無指定なら無風）
+    this.setWind(stage.wind?.x ?? 0, stage.wind?.z ?? 0);
     this.updateProgressText();
     this.buildStageObjects(stage);
     this.resetForNextShot();
+  }
+
+  /** 風速を設定し、HUD表示用に state にも反映する */
+  private setWind(x: number, z: number): void {
+    this.windX = x;
+    this.windZ = z;
+    this.state.windX = x;
+    this.state.windZ = z;
   }
 
   /** 累積ミッションの進捗テキストを state に反映する（HUD表示用） */
@@ -1035,6 +1257,8 @@ export class Game {
     const spin = this.state.curve * MAX_CURVE_SPIN;
     this.ballBody.angularVelocity.set(-dir.z * 8, spin, dir.x * 8);
 
+    this.sfx.kick(this.state.power);
+
     this.prevBallZ = this.ballBody.position.z;
     this.prevPostX = this.ballBody.position.x;
     this.prevPostZ = this.ballBody.position.z;
@@ -1048,8 +1272,8 @@ export class Game {
 
   private resetBall(): void {
     // ネット接触で上げた減衰を通常値へ戻す
-    this.ballBody.linearDamping = 0.2;
-    this.ballBody.angularDamping = 0.2;
+    this.ballBody.linearDamping = FLIGHT_LINEAR_DAMPING;
+    this.ballBody.angularDamping = FLIGHT_ANGULAR_DAMPING;
     this.ballBody.velocity.setZero();
     this.ballBody.angularVelocity.setZero();
     this.ballBody.position.set(0, BALL_RADIUS, 0);
@@ -1121,12 +1345,13 @@ export class Game {
       const x = this.ballBody.position.x;
       const y = this.ballBody.position.y;
       const inside = Math.abs(x) < GOAL_WIDTH / 2 && y > 0 && y < GOAL_HEIGHT;
-      // 枠内に入ったらネットを光らせて揺らす（ゴールを分かりやすく）
+      // 枠内に入ったらネットを光らせて揺らし、観衆の歓声を鳴らす
       if (inside) {
         this.netFlashTimer = NET_FLASH_TIME;
         // 背面メッシュのローカル座標系での衝突点を記録（メッシュ中心は y=GOAL_HEIGHT/2）
         this.netImpactX = x;
         this.netImpactY = y - GOAL_HEIGHT / 2;
+        this.sfx.goal();
       }
       const inTarget = this.currentTarget
         ? this.inZone(x, y, this.currentTarget)
@@ -1178,6 +1403,7 @@ export class Game {
       // クリア表示はオーバーレイで行うため結果バナーは出さない
       this.state.lastResult = null;
       this.state.stageCleared = true;
+      this.sfx.whistle();
       if (this.state.stageIndex >= this.stages.length - 1) {
         this.state.allCleared = true;
       }
@@ -1253,6 +1479,7 @@ export class Game {
     if (cleared) {
       this.state.lastResult = null;
       this.state.stageCleared = true;
+      this.sfx.whistle();
       if (this.state.stageIndex >= this.stages.length - 1) {
         this.state.allCleared = true;
       }
@@ -1320,13 +1547,38 @@ export class Game {
       }
     }
 
-    // 飛行中はマグヌス力（F = k * ω × v）で軌道を曲げる。
-    // 力は物理ステップ前に加える（cannon-es はステップ後に力をクリアする）。
+    // 飛行中の空力：空気抵抗（二次抗力）とマグヌス力を対気速度（風を差し引いた速度）で
+    // 計算して加える。力は物理ステップ前に加える（cannon-es はステップ後に力をクリアする）。
     if (this.state.phase === 'shooting') {
-      const magnus = new CANNON.Vec3();
-      this.ballBody.angularVelocity.cross(this.ballBody.velocity, magnus);
-      magnus.scale(MAGNUS_COEF, magnus);
-      this.ballBody.applyForce(magnus);
+      const v = this.ballBody.velocity;
+      const relX = v.x - this.windX;
+      const relY = v.y;
+      const relZ = v.z - this.windZ;
+      const relSpeed = Math.hypot(relX, relY, relZ);
+      if (relSpeed > 0.01) {
+        // 空気抵抗 F = -DRAG_K・|v_rel|・v_rel（風下へ流される効果もここから生まれる）
+        const fd = -DRAG_K * relSpeed;
+        // マグヌス力 F = MAGNUS_COEF・(ω × v_rel)
+        const w = this.ballBody.angularVelocity;
+        const mx = w.y * relZ - w.z * relY;
+        const my = w.z * relX - w.x * relZ;
+        const mz = w.x * relY - w.y * relX;
+        this.ballBody.applyForce(
+          new CANNON.Vec3(
+            fd * relX + MAGNUS_COEF * mx,
+            fd * relY + MAGNUS_COEF * my,
+            fd * relZ + MAGNUS_COEF * mz,
+          ),
+        );
+      }
+      // 芝の上を転がっている間は転がり抵抗で自然に減速させる
+      if (this.ballBody.position.y < BALL_RADIUS + 0.02) {
+        const rollSpeed = Math.hypot(v.x, v.z);
+        if (rollSpeed > 0.1) {
+          const fr = (ROLL_RESIST * BALL_MASS * 9.82) / rollSpeed;
+          this.ballBody.applyForce(new CANNON.Vec3(-fr * v.x, 0, -fr * v.z));
+        }
+      }
     }
 
     // 物理ステップ
@@ -1337,6 +1589,16 @@ export class Game {
     this.ballMesh.quaternion.copy(
       this.ballBody.quaternion as unknown as THREE.Quaternion,
     );
+
+    // カメラの視線：キック後はボールを緩やかに目で追い、次のキックで正面へ戻す
+    const track = this.state.mode !== null && this.state.phase !== 'aiming';
+    const lookX = track ? this.ballMesh.position.x : 0;
+    const lookY = track ? this.ballMesh.position.y + 0.4 : 1;
+    const lookZ = track ? this.ballMesh.position.z : GOAL_Z;
+    this.camLook.x = THREE.MathUtils.damp(this.camLook.x, lookX, 4, dt);
+    this.camLook.y = THREE.MathUtils.damp(this.camLook.y, lookY, 4, dt);
+    this.camLook.z = THREE.MathUtils.damp(this.camLook.z, lookZ, 4, dt);
+    this.camera.lookAt(this.camLook);
 
     if (this.state.phase === 'shooting') {
       this.checkPostHits();

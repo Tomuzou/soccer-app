@@ -19,15 +19,17 @@ Three.jsで3Dシーンを描画し、Cannon-esで物理シミュレーション�
 src/
   game/
     Game.ts      # ゲーム本体（Three.js シーン描画 + Cannon-es 物理 + 入力処理 + モード/ステージ制御）
-    stages.ts    # ステージ定義（α=STAGES_A / β=STAGES_B / γ=STAGES_C、各10ステージのミッション・障害物・的ゾーン）
+    stages.ts    # ステージ定義（α=STAGES_A / β=STAGES_B / γ=STAGES_C / δ=STAGES_D、各10ステージ）
+    sfx.ts       # 効果音（WebAudio合成。音源ファイル不使用。キック/ポスト/バウンド/ネット/歓声/ホイッスル）
   types/
-    index.ts     # GameState / GamePhase / StageDefinition などの型定義
-  App.tsx        # UIオーバーレイ（タイトル・スコア/ステージHUD・パワー/カーブメーター・クリア表示・初期版リンク）
+    index.ts     # GameState / GamePhase / StageDefinition / StageSet などの型定義
+  App.tsx        # UIオーバーレイ（タイトル・スコア/ステージHUD・風表示・パワー/カーブメーター・クリア表示・過去版リンク）
   App.css        # UIオーバーレイのスタイル
   main.tsx       # エントリポイント
   index.css      # グローバルスタイル
 public/
   v1/            # 初期版（初公開コミット 2cd2cbe）の凍結ビルド。/soccer-app/v1/ で配信される静的アーカイブ
+  v2/            # 前期版（コミット 74785ea 時点）の凍結ビルド。/soccer-app/v2/ で配信。v2/v1/ は /v1/ へのリダイレクトスタブ
 .github/
   workflows/
     deploy.yml   # master push 時に dist をビルドし GitHub Pages へデプロイ
@@ -37,10 +39,11 @@ public/
 
 ```bash
 npm run dev      # 開発サーバー（localhost:5173）
-npm run build    # 本番ビルド
+npm run build    # 本番ビルド（tsc で型チェック → vite build）
 npm run preview  # ビルド結果プレビュー
-npm run lint     # ESLint
 ```
+
+※ lint スクリプトは未導入（`npm run build` の tsc が型チェックを兼ねる）
 
 ## 設計方針
 
@@ -48,14 +51,24 @@ npm run lint     # ESLint
 - 物理エンジンのステップ更新はrequestAnimationFrameループで行う
 - UIオーバーレイ（スコア表示等）はReactコンポーネントで管理
 - 入力は役割を分離：キャンバスのドラッグ＝コース＋パワー、カーブはUIの専用スライダー（`Game.setCurve`）で設定する
-- カーブはマグヌス効果で再現（`MAX_CURVE_SPIN` / `MAGNUS_COEF` で曲がり具合を調整）
+- 効果音は `sfx.ts` の `Sfx` クラスで WebAudio 合成。AudioContext は初回キック（ユーザー操作起点）で遅延生成し、自動再生制限を回避する。衝突音は `onBallCollide` の衝突強度（`getImpactVelocityAlongNormal`）で音量・省略を決める
+- カメラは注視点（`camLook`）を damp で動かし、キック後はボールを目で追い、次のキックで正面へ戻す
+
+### 物理モデル（実測値ベース）
+
+- **空気抵抗**：二次抗力 `F = -DRAG_K・|v_rel|・v_rel`。`v_rel` は風を差し引いた対気速度。係数は実球の断面積（`BALL_AERO_RADIUS`=0.11m）と抗力係数（`DRAG_COEF`=0.22）から算出。`linearDamping` はほぼ 0（`FLIGHT_LINEAR_DAMPING`）にして減速は空力で行う
+- **マグヌス力**：`F = MAGNUS_COEF・(ω × v_rel)`。実際のFKの曲がり幅（〜2.5m）に合わせた係数。スピンは飛行中ほとんど減衰させない（`FLIGHT_ANGULAR_DAMPING`=0.08）
+- **風**（δステージ）：`StageDefinition.wind`（x=横風・z=向かい風/追い風、m/s）。対気速度に入るので抗力・マグヌスの両方に効く。空力は `phase==='shooting'` 中のみ適用（照準中にボールが流されない）
+- **バウンド・転がり**：ボール×芝の `ContactMaterial`（restitution 0.65 / friction 0.4）、転がり抵抗（`ROLL_RESIST`）、ポストは金属反発（restitution 0.8）、壁・キーパーは鈍い反発（defaultContactMaterial 0.45）
+- 質量は FIFA 規定の 0.43kg。ゴールは実寸（7.32×2.44m）、キック距離は約18m
+- 調整ノブ：曲がり＝`MAGNUS_COEF`/`MAX_CURVE_SPIN`、飛距離感＝`DRAG_COEF`、風の効き＝ステージ側の風速値
 
 ## ゲームモード／ステージ
 
 - モードは `GameState.mode`（`null`=タイトル / `'free'` / `'stage'`）で管理し、React側（`App.tsx`）が画面を出し分ける
-- ステージは3セット：α（`STAGES_A`）/ β（`STAGES_B`）/ γ（`STAGES_C`）。`GameState.stageSet`（`'a'`/`'b'`/`'c'`）で現在セットを表す
+- ステージは4セット：α（`STAGES_A`）/ β（`STAGES_B`）/ γ（`STAGES_C`）/ δ（`STAGES_D`）。`GameState.stageSet`（`StageSet` = `'a'`/`'b'`/`'c'`/`'d'`）で現在セットを表す
 - モード遷移は `Game` の公開メソッド：`startFreePlay()` / `startStage(set, index)` / `nextStage()` / `returnToMenu()`
-- ステージ定義は `src/game/stages.ts` の `STAGES_A` / `STAGES_B` / `STAGES_C` 配列にデータとして持つ（ミッションの追加・調整はここを編集）
+- ステージ定義は `src/game/stages.ts` の `STAGES_A` 〜 `STAGES_D` 配列にデータとして持つ（ミッションの追加・調整はここを編集）
 - ステージのミッション条件は `StageDefinition` のフラグの組み合わせ：`requireGoal`（枠内）/ `hitBar`（バー当て）/ `hitPostL`・`hitPostR`（左右ポスト当て）/ `target`（的・サイドネットのゾーン通過）/ `obstacles`（物理的にコースを塞ぐ障害物）
 - 障害物の種別：固定壁 / `move`付き（sin往復キーパー）/ `track`付き（ボールのXを追うAIキーパー）。AIキーパーは速い・カーブの効いたシュートでないと抜けない（`animate()` で追従、`track.speed` で難度調整）。**障害物は物理的に弾くだけで、接触自体は失敗にしない**（実サッカー同様、壁・キーパーに当たって入ってもゴール）
 - 障害物・的ゾーンはステージ切替時に `buildStageObjects` で生成、`clearStageObjects` で破棄する動的オブジェクト
@@ -78,12 +91,21 @@ npm run lint     # ESLint
 - 蹴り直し（`retryShot`）も1球消費。球切れでステージ失敗が確定したら `resetForNextShot` せず先頭戻しに委ねる
 - HUDは `shotLimit>0` のとき「残り N / M 球」と進捗テキストを表示（残り1球で赤点滅）。球切れ時は `lastResult='fail'` で「STAGE FAILED… 最初から」バナー
 
+### δ（風チャレンジ／`STAGES_D`）
+
+- 各ステージに **`wind`（風速 m/s）** を持たせ、風を読んで狙いをずらす遊び。`x`: 正=左からの横風（ボールは右へ流れる）/ 負=右からの横風、`z`: 正=向かい風（失速）/ 負=追い風（伸びる）
+- 風は `Game.setWind` で `loadStage` 時に設定し、フリープレイ・メニュー復帰でゼロクリア。物理には対気速度（`v_rel = v - wind`）として空気抵抗・マグヌス力の両方に入る（専用の「風力」は加えない＝物理的に自然な流され方になる）
+- 風の効き目安：横風 w m/s でゴール到達までに約 0.09×w m 流れる（w=8 → 約0.7m）。ステージの風速は 5〜10 で設定
+- HUDは風があるとき「💨 → 横風 5m/s」等を表示（`GameState.windX/windZ`、表示文言は `App.tsx` の `windLabel`）
+- γのメカニクス（`shotLimit`/`goal`）とは直交しており併用可（δ7=ビンゴ＋風、δ9=スコア＋向かい風）
+
 ## デプロイ／バージョンアーカイブ
 
 - `.github/workflows/deploy.yml` が master への push をトリガーに `npm run build`（=`dist`）を GitHub Pages へ公開する
 - 本番 base は `vite.config.ts` で `/soccer-app/`（dev は `/`）。GitHub Pages は静的配信のみで SPA フォールバックしない点に注意（サブパスの index.html はそのまま配信される）
-- **成長過程アーカイブ**：プロジェクトの初期版を遊べるよう、過去バージョンの**ビルド済み成果物を凍結**して `public/v1/` に同梱する。`public/` 配下は vite が `dist/` 直下へそのままコピーするため、毎回のCIビルドで現行版と一緒に配信される
-  - 現行版＝`/soccer-app/`、初期版＝`/soccer-app/v1/`
-  - 初期版の作り方：対象コミットを `git worktree` でチェックアウト → `npm ci` → `npm run build -- --base=/soccer-app/v1/`（Git Bash では base が壊れるので `MSYS_NO_PATHCONV=1` を付ける）→ 生成 `dist/` を `public/v1/` へコピー
-  - 相互リンク：現行版は `App.tsx` のタイトル画面から `import.meta.env.BASE_URL + 'v1/'` で初期版へ、初期版は `public/v1/index.html` に直接埋め込んだリンクで `/soccer-app/` へ戻る
-  - 節目ごとに `/v2/` `/v3/` … と増やせる（各版は凍結スナップショットなので再ビルド不要）
+- **成長過程アーカイブ**：過去バージョンの**ビルド済み成果物を凍結**して `public/vN/` に同梱する。`public/` 配下は vite が `dist/` 直下へそのままコピーするため、毎回のCIビルドで現行版と一緒に配信される
+  - 現行版＝`/soccer-app/`、初期版＝`/soccer-app/v1/`（コミット 2cd2cbe）、前期版＝`/soccer-app/v2/`（コミット 74785ea 時点＝リアル物理・δ導入前）
+  - アーカイブの作り方：対象コミット（過去ならば `git worktree`、現行HEADならそのまま）で `npm run build -- --base=/soccer-app/vN/`（Git Bash では base が壊れるので `MSYS_NO_PATHCONV=1` を付ける）→ 生成 `dist/` を `public/vN/` へコピー
+  - **入れ子の除去**：ビルドには `public/` の既存アーカイブが `dist/vM/` として入り込むので、コピー前に削除する。凍結版のバンドル内に残る旧版へのリンク（`BASE_URL + 'vM/'` → `/soccer-app/vN/vM/`）は、`<meta http-equiv="refresh">` のリダイレクトスタブ（例 `public/v2/v1/index.html`）でトップレベルの `/soccer-app/vM/` へ転送する
+  - 相互リンク：現行版は `App.tsx` のタイトル画面から `import.meta.env.BASE_URL + 'v1/'`・`+ 'v2/'` で各過去版へ、各過去版は `public/vN/index.html` に直接埋め込んだバナーリンクで `/soccer-app/` へ戻る
+  - 節目ごとに `/v3/` `/v4/` … と増やせる（各版は凍結スナップショットなので再ビルド不要）

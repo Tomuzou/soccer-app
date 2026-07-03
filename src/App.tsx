@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Game } from './game/Game';
-import type { GameState } from './types';
+import type { GameState, StageSet } from './types';
 import './App.css';
 
 const INITIAL_STATE: GameState = {
@@ -22,10 +22,20 @@ const INITIAL_STATE: GameState = {
   progressText: '',
   stageCleared: false,
   allCleared: false,
+  windX: 0,
+  windZ: 0,
 };
 
 /** ステージセット記号 */
-const SET_SYMBOL: Record<'a' | 'b' | 'c', string> = { a: 'α', b: 'β', c: 'γ' };
+const SET_SYMBOL: Record<StageSet, string> = { a: 'α', b: 'β', c: 'γ', d: 'δ' };
+
+/** HUD用の風表示テキスト（例 "→ 横風 5m/s / 向かい風 8m/s"） */
+const windLabel = (x: number, z: number): string => {
+  const parts: string[] = [];
+  if (x !== 0) parts.push(`${x > 0 ? '→' : '←'} 横風 ${Math.abs(x)}m/s`);
+  if (z !== 0) parts.push(`${z > 0 ? '向かい風' : '追い風'} ${Math.abs(z)}m/s`);
+  return parts.join(' ・ ');
+};
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -107,51 +117,43 @@ export default function App() {
               ステージモード-γ
               <span className="btn-badge">球数制限</span>
             </button>
+            <button
+              className="menu-btn delta"
+              onClick={() => gameRef.current?.startStage('d', 0)}
+            >
+              ステージモード-δ
+              <span className="btn-badge">風</span>
+            </button>
           </div>
 
-          {/* 成長過程アーカイブ：初めて作った頃のバージョンで遊ぶ */}
-          <a className="archive-link" href={`${import.meta.env.BASE_URL}v1/`}>
-            🕹️ 初期バージョンで遊ぶ
-          </a>
-          <p className="archive-note">最初に公開した頃の素朴な版で遊べます</p>
+          {/* 成長過程アーカイブ：過去バージョンで遊ぶ */}
+          <div className="archive-links">
+            <a className="archive-link" href={`${import.meta.env.BASE_URL}v1/`}>
+              🕹️ 初期バージョン（v1）
+            </a>
+            <a className="archive-link" href={`${import.meta.env.BASE_URL}v2/`}>
+              🕹️ ひとつ前のバージョン（v2）
+            </a>
+          </div>
+          <p className="archive-note">成長過程のアーカイブ版で遊べます</p>
 
           {/* 開発時のみ：任意ステージへジャンプ（テスト用） */}
           {import.meta.env.DEV && (
             <div className="dev-jump">
               <div className="dev-jump-label">DEV: ステージへジャンプ</div>
-              <div className="dev-jump-row">
-                <span className="dev-jump-set">α</span>
-                {Array.from({ length: 10 }, (_, i) => (
-                  <button
-                    key={`a${i}`}
-                    onClick={() => gameRef.current?.startStage('a', i)}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
-              </div>
-              <div className="dev-jump-row">
-                <span className="dev-jump-set">β</span>
-                {Array.from({ length: 10 }, (_, i) => (
-                  <button
-                    key={`b${i}`}
-                    onClick={() => gameRef.current?.startStage('b', i)}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
-              </div>
-              <div className="dev-jump-row">
-                <span className="dev-jump-set">γ</span>
-                {Array.from({ length: 10 }, (_, i) => (
-                  <button
-                    key={`c${i}`}
-                    onClick={() => gameRef.current?.startStage('c', i)}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
-              </div>
+              {(['a', 'b', 'c', 'd'] as const).map((set) => (
+                <div className="dev-jump-row" key={set}>
+                  <span className="dev-jump-set">{SET_SYMBOL[set]}</span>
+                  {Array.from({ length: 10 }, (_, i) => (
+                    <button
+                      key={`${set}${i}`}
+                      onClick={() => gameRef.current?.startStage(set, i)}
+                    >
+                      {i + 1}
+                    </button>
+                  ))}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -168,6 +170,11 @@ export default function App() {
               </div>
               <div className="stage-name">{state.stageName}</div>
               <div className="stage-mission">🎯 {state.mission}</div>
+              {(state.windX !== 0 || state.windZ !== 0) && (
+                <div className="stage-wind">
+                  💨 {windLabel(state.windX, state.windZ)}
+                </div>
+              )}
               {state.shotLimit > 0 ? (
                 <div className="stage-limit">
                   <span

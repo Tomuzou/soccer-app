@@ -4,6 +4,9 @@ export type GamePhase = 'aiming' | 'shooting' | 'result';
 /** ゲームモード（null=タイトル画面） */
 export type GameMode = 'free' | 'stage';
 
+/** ステージセット（'a'=α / 'b'=β / 'c'=γ / 'd'=δ） */
+export type StageSet = 'a' | 'b' | 'c' | 'd';
+
 /** シュート結果（'fail'=制限球を使い切ってステージ失敗） */
 export type ShotResult = 'goal' | 'miss' | 'fail' | null;
 
@@ -86,6 +89,12 @@ export interface StageDefinition {
   shotLimit?: number;
   /** 累積達成ルール（省略時は1球で条件を満たす従来の単発判定） */
   goal?: StageGoal;
+  // --- δ（風ステージ）用 ---
+  /**
+   * 風速ベクトル（m/s）。x: 正=左から右へ吹く横風 / z: 正=向かい風・負=追い風。
+   * 空気抵抗・マグヌス力の計算に「対気速度」として組み込まれ、飛行中のボールを流す。
+   */
+  wind?: { x?: number; z?: number };
 }
 
 /** UIに表示するゲーム状態 */
@@ -101,8 +110,8 @@ export interface GameState {
   /** -1（左カーブ）〜1（右カーブ） */
   curve: number;
   // --- ステージモード用 ---
-  /** ステージセット（'a'=α / 'b'=β / 'c'=γ） */
-  stageSet: 'a' | 'b' | 'c';
+  /** ステージセット（'a'=α / 'b'=β / 'c'=γ / 'd'=δ） */
+  stageSet: StageSet;
   /** 現在のステージ番号（0始まり） */
   stageIndex: number;
   /** 総ステージ数 */
@@ -123,4 +132,7 @@ export interface GameState {
   stageCleared: boolean;
   /** 全ステージをクリアしたか */
   allCleared: boolean;
+  /** 現在ステージの風速（m/s）。0なら無風。HUDの風向き表示に使う */
+  windX: number;
+  windZ: number;
 }

@@ -81,6 +81,14 @@
   margin-top: 4px;
 }
 
+/* δ：風向き・風速の表示 */
+.stage-wind {
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: 4px;
+  color: #7dd3fc;
+}
+
 /* γ：球数制限・進捗表示 */
 .stage-limit {
   display: flex;
@@ -147,10 +155,17 @@
   width: min(80vw, 260px);
 }
 
-/* 成長過程アーカイブ（初期バージョンへのリンク） */
+/* 成長過程アーカイブ（過去バージョンへのリンク） */
+.archive-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
 .archive-link {
   display: inline-block;
-  margin-top: 20px;
   padding: 8px 18px;
   font-size: 14px;
   font-weight: 700;
@@ -273,6 +288,21 @@
 .menu-btn.gamma .btn-badge {
   color: #6d28d9;
   background: #c4b5fd;
+}
+
+.menu-btn.delta {
+  position: relative;
+  background: linear-gradient(90deg, #0ea5e9, #0369a1);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.menu-btn.delta:hover {
+  background: linear-gradient(90deg, #22b3f5, #0479ba);
+}
+
+.menu-btn.delta .btn-badge {
+  color: #0369a1;
+  background: #bae6fd;
 }
 
 .btn-badge {

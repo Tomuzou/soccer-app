@@ -314,3 +314,104 @@ export const STAGES_C: StageDefinition[] = [
     obstacles: [{ x: 0, y: 1.0, z: -9, w: 3.2, h: 1.9, d: 0.4 }, aiKeeper(3.8)],
   },
 ];
+
+/**
+ * ステージモード-δ（全10ステージ・風のチャレンジ）。
+ * 各ステージに風（wind、単位 m/s）が吹いており、飛行中のボールは空気抵抗を通じて
+ * 風下へ流される。x: 正=左からの横風（ボールは右へ流れる）/ 負=右からの横風、
+ * z: 正=向かい風（失速する）/ 負=追い風（伸びる）。
+ * 風を先読みして狙いをずらす・風に乗せてカーブを増幅するのが攻略の鍵。
+ */
+export const STAGES_D: StageDefinition[] = [
+  {
+    id: 1,
+    name: 'そよ風キック',
+    mission: '左からの風を読んでゴール！',
+    requireGoal: true,
+    wind: { x: 5 },
+  },
+  {
+    id: 2,
+    name: '強風スナイパー',
+    mission: '右からの強風の中、右上の的へ！',
+    requireGoal: true,
+    wind: { x: -7 },
+    target: { x: 2.4, y: 1.85, w: 2.0, h: 0.95 },
+  },
+  {
+    id: 3,
+    name: '向かい風',
+    mission: '強い向かい風！フルパワーで突き破れ！',
+    requireGoal: true,
+    wind: { z: 8 },
+  },
+  {
+    id: 4,
+    name: '追い風ロブ',
+    mission: '追い風に乗せて壁を越えろ！',
+    requireGoal: true,
+    wind: { z: -6 },
+    obstacles: [{ x: 0, y: 1.05, z: -9, w: 3.4, h: 2.1, d: 0.4 }],
+  },
+  {
+    id: 5,
+    name: '風とキーパー',
+    mission: '風とキーパー、両方をかわせ！',
+    requireGoal: true,
+    wind: { x: 6 },
+    obstacles: [
+      { x: 0, y: 0.95, z: -16.5, w: 1.6, h: 1.9, d: 0.5, move: { axis: 'x', range: 2.4, speed: 1.6 } },
+    ],
+  },
+  {
+    id: 6,
+    name: '風下のポスト',
+    mission: '風に流して右ポストに当てろ！',
+    requireGoal: false,
+    hitPostR: true,
+    wind: { x: 8 },
+  },
+  {
+    id: 7,
+    name: '乱気流ビンゴ',
+    mission: '6球で3つの的！風を読み切れ！',
+    requireGoal: true,
+    wind: { x: -6 },
+    shotLimit: 6,
+    goal: { type: 'bingo', zones: [Z_TL, Z_TR, { x: 0, y: 0.6, w: 1.8, h: 0.95 }] },
+  },
+  {
+    id: 8,
+    name: '台風のAIキーパー',
+    mission: '台風並みの横風でAIキーパーを抜け！',
+    requireGoal: true,
+    wind: { x: -8 },
+    obstacles: [aiKeeper(3.4)],
+  },
+  {
+    id: 9,
+    name: '向かい風スコアアタック',
+    mission: '向かい風の中、5球で10点！',
+    requireGoal: true,
+    wind: { z: 9 },
+    shotLimit: 5,
+    goal: {
+      type: 'score',
+      need: 10,
+      zones: [
+        { ...Z_TL, points: 5 },
+        { ...Z_TR, points: 5 },
+        { x: 0, y: 1.2, w: 2.2, h: 1.6, points: 2 },
+      ],
+    },
+  },
+  {
+    id: 10,
+    name: '嵐の最終決戦',
+    mission: '嵐の横風！壁とキーパーを越え左上へ！',
+    requireGoal: true,
+    wind: { x: 10 },
+    target: { x: -2.5, y: 1.85, w: 1.7, h: 0.95 },
+    obstacles: [{ x: 0, y: 1.0, z: -9, w: 3.2, h: 1.9, d: 0.4 }, aiKeeper(3.6)],
+  },
+];
