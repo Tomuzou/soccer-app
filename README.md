@@ -2,7 +2,7 @@
 
 ブラウザで遊べる3Dフリーキックゲーム。React・Three.js・Cannon-esで、狙い、カーブ、空気抵抗、風、キーパーとの駆け引きを楽しめます。
 
-**[最新版で遊ぶ](https://tomuzou.github.io/soccer-app/)** · **[ver.g.1で遊ぶ](https://tomuzou.github.io/soccer-app/ver.g.1/)**
+**[最新版で遊ぶ](https://tomuzou.github.io/soccer-app/)**
 
 ## ver.g.1 / Codex版
 
