@@ -121,6 +121,13 @@ export class Game {
 
   /** 効果音（WebAudio合成） */
   private sfx = new Sfx();
+  private freeShotLimit = 0;
+  private trailEnabled = true;
+  private trailPoints: THREE.Vector3[] = [];
+  private trailLine = new THREE.Line(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0xc6f36b, transparent: true, opacity: 0.85 }),
+  );
 
   // 現在ステージの風速（m/s）。飛行中の空力計算に対気速度として入る
   private windX = 0;
@@ -233,6 +240,7 @@ export class Game {
     this.setupGoal();
     this.setupBall();
     this.setupAimArrow();
+    this.scene.add(this.trailLine);
     // タイトル画面では照準を出さない
     this.aimArrow.visible = false;
 
@@ -240,6 +248,7 @@ export class Game {
     this.resizeObserver = new ResizeObserver(() => this.onResize());
     this.resizeObserver.observe(container);
     this.bindInput();
+    this.onResize();
 
     this.emitState();
     this.clock.start();
@@ -745,7 +754,9 @@ export class Game {
   // ---------------------------------------------------------------------------
 
   /** フリープレイを開始する */
-  startFreePlay(): void {
+  startFreePlay(shotLimit = 0): void {
+    this.freeShotLimit = Math.max(0, Math.floor(shotLimit));
+    this.stageFailPending = false;
     this.clearStageObjects();
     this.setWind(0, 0);
     this.state.mode = 'free';
@@ -758,6 +769,7 @@ export class Game {
 
   /** ステージモードを開始する（set='a'=α / 'b'=β / 'c'=γ / 'd'=δ、既定は最初のステージ） */
   startStage(set: StageSet, index = 0): void {
+    this.freeShotLimit = 0;
     const sets: Record<StageSet, StageDefinition[]> = {
       a: STAGES_A,
       b: STAGES_B,
@@ -767,7 +779,7 @@ export class Game {
     this.stages = sets[set];
     this.state.stageSet = set;
     this.state.stageCount = this.stages.length;
-    this.loadStage(index);
+    this.loadStage(THREE.MathUtils.clamp(Math.floor(index), 0, this.stages.length - 1));
   }
 
   /** クリア後に次のステージへ進む */
@@ -788,6 +800,7 @@ export class Game {
   retryShot(): void {
     if (this.state.mode === null) return;
     if (this.state.stageCleared) return;
+    if (this.freeShotLimit > 0 && this.state.attempts >= this.freeShotLimit) return;
     // phase が 'shooting' のときだけ失敗として計上される（finishShot 内のガード）
     this.finishShot(false, false, 0, 0);
     // 制限球切れでステージ失敗が確定した場合はリセットせず、結果表示→先頭戻しに任せる
@@ -797,6 +810,9 @@ export class Game {
 
   /** タイトル画面へ戻る */
   returnToMenu(): void {
+    this.stageFailPending = false;
+    this.trailPoints = [];
+    this.trailLine.visible = false;
     this.clearStageObjects();
     this.setWind(0, 0);
     this.dragging = false;
@@ -1168,13 +1184,14 @@ export class Game {
     dom.addEventListener('pointerdown', this.onPointerDown);
     dom.addEventListener('pointermove', this.onPointerMove);
     dom.addEventListener('pointerup', this.onPointerUp);
-    dom.addEventListener('pointercancel', this.onPointerUp);
+    dom.addEventListener('pointercancel', this.onPointerCancel);
   }
 
   /** ドラッグ開始位置を記録する */
   private onPointerDown = (e: PointerEvent): void => {
     if (this.state.mode === null) return; // タイトル画面では無効
     if (this.state.phase !== 'aiming') return;
+    if (this.dragging) return;
     this.dragging = true;
     this.dragStartX = e.clientX;
     this.dragStartY = e.clientY;
@@ -1218,6 +1235,12 @@ export class Game {
     this.shoot();
   };
 
+  private onPointerCancel = (): void => {
+    this.dragging = false;
+    this.state.power = 0;
+    this.emitState();
+  };
+
   // ---------------------------------------------------------------------------
   // ゲームロジック
   // ---------------------------------------------------------------------------
@@ -1230,6 +1253,28 @@ export class Game {
     if (this.state.phase !== 'aiming') return;
     this.state.curve = THREE.MathUtils.clamp(value, -1, 1);
     this.emitState();
+  }
+
+  setMuted(muted: boolean): void { this.sfx.setMuted(muted); }
+
+  setTrail(enabled: boolean): void {
+    this.trailEnabled = enabled;
+    this.trailLine.visible = enabled && this.trailPoints.length > 1;
+  }
+
+  configureShot(aim: number, elevation: number, power: number): void {
+    if (this.state.mode === null || this.state.phase !== 'aiming' || this.state.stageCleared) return;
+    this.aimX = THREE.MathUtils.clamp(aim, -1, 1);
+    this.aimY = THREE.MathUtils.clamp(elevation, 0, 1);
+    this.state.power = THREE.MathUtils.clamp(power, 0.08, 1);
+    this.updateAimArrow();
+    this.emitState();
+  }
+
+  kickShot(): void {
+    if (this.state.mode === null || this.state.phase !== 'aiming' || this.state.stageCleared) return;
+    if (this.freeShotLimit > 0 && this.state.attempts >= this.freeShotLimit) return;
+    this.shoot();
   }
 
   /** 現在の照準から打ち出し方向の単位ベクトルを求める */
@@ -1250,6 +1295,8 @@ export class Game {
   }
 
   private shoot(): void {
+    this.trailPoints = [this.ballMesh.position.clone()];
+    this.trailLine.visible = false;
     const dir = this.aimDirection();
     const speed = MIN_SPEED + this.state.power * (MAX_SPEED - MIN_SPEED);
     this.ballBody.velocity.set(dir.x * speed, dir.y * speed, dir.z * speed);
@@ -1589,6 +1636,17 @@ export class Game {
     this.ballMesh.quaternion.copy(
       this.ballBody.quaternion as unknown as THREE.Quaternion,
     );
+    if (this.state.phase === 'shooting' && this.trailEnabled) {
+      const previous = this.trailPoints[this.trailPoints.length - 1];
+      if (!previous || previous.distanceToSquared(this.ballMesh.position) > 0.035) {
+        this.trailPoints.push(this.ballMesh.position.clone());
+        if (this.trailPoints.length > 180) this.trailPoints.shift();
+        const geometry = new THREE.BufferGeometry().setFromPoints(this.trailPoints);
+        this.trailLine.geometry.dispose();
+        this.trailLine.geometry = geometry;
+        this.trailLine.visible = true;
+      }
+    }
 
     // カメラの視線：キック後はボールを緩やかに目で追い、次のキックで正面へ戻す
     const track = this.state.mode !== null && this.state.phase !== 'aiming';
@@ -1666,7 +1724,7 @@ export class Game {
     }
 
     // 結果表示中（ステージクリア中は次操作までそのまま待機）
-    if (this.state.phase === 'result' && !this.state.stageCleared) {
+    if (this.state.phase === 'result' && !this.state.stageCleared && !(this.state.mode === 'free' && this.freeShotLimit > 0 && this.state.attempts >= this.freeShotLimit)) {
       this.resultTimer -= dt;
       if (this.resultTimer <= 0) {
         if (this.stageFailPending) {
@@ -1683,6 +1741,9 @@ export class Game {
   };
 
   private resetForNextShot(): void {
+    this.dragging = false;
+    this.trailPoints = [];
+    this.trailLine.visible = false;
     this.resetBall();
     this.state.power = 0;
     // カーブはスライダーの設定値を次のキックにも引き継ぐ
@@ -1700,6 +1761,8 @@ export class Game {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     this.camera.aspect = w / h;
+    // Reserve space for the shot controls so the ball stays visible in portrait.
+    this.camera.setViewOffset(w, h, 0, h * (w / h < 0.9 ? 0.14 : 0.04), w, h);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
   }
@@ -1709,12 +1772,15 @@ export class Game {
     cancelAnimationFrame(this.animationId);
     this.resizeObserver.disconnect();
     this.clearStageObjects();
+    this.sfx.dispose();
+    this.trailLine.geometry.dispose();
+    (this.trailLine.material as THREE.Material).dispose();
     this.ballBody.removeEventListener('collide', this.onBallCollide);
     const dom = this.renderer.domElement;
     dom.removeEventListener('pointerdown', this.onPointerDown);
     dom.removeEventListener('pointermove', this.onPointerMove);
     dom.removeEventListener('pointerup', this.onPointerUp);
-    dom.removeEventListener('pointercancel', this.onPointerUp);
+    dom.removeEventListener('pointercancel', this.onPointerCancel);
     this.renderer.dispose();
     if (dom.parentElement) dom.parentElement.removeChild(dom);
   }

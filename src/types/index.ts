@@ -82,7 +82,7 @@ export interface StageDefinition {
   hitPostR?: boolean;
   /** 通過すべきターゲットゾーン */
   target?: TargetZone;
-  /** 触れたら失敗する障害物 */
+  /** ボールを物理的に弾く障害物。接触自体では失敗にならない。 */
   obstacles?: ObstacleDef[];
   // --- γ（球数制限チャレンジ）用 ---
   /** 制限球数。これを使い切ってもミッション未達ならステージ最初からやり直し */

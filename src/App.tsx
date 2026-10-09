@@ -1,323 +1,723 @@
-import { useEffect, useRef, useState } from 'react';
-import { Game } from './game/Game';
-import type { GameState, StageSet } from './types';
-import './App.css';
+import { useEffect, useRef, useState } from "react";
+import { Game } from "./game/Game";
+import { STAGES_A, STAGES_B, STAGES_C, STAGES_D } from "./game/stages";
+import {
+  emptyProgress,
+  parseProgress,
+  recordClear,
+  SAVE_KEY,
+  starsFor,
+} from "./game/progress";
+import type { GameState, StageSet } from "./types";
+import "./App.css";
 
-const INITIAL_STATE: GameState = {
+const SETS = [
+  {
+    id: "a" as const,
+    symbol: "α",
+    name: "BASICS",
+    label: "まずは、狙いどおりに。",
+    description: "ゴール、バー、的。基本の10ミッション。",
+    stages: STAGES_A,
+  },
+  {
+    id: "b" as const,
+    symbol: "β",
+    name: "PRECISION",
+    label: "その一球を、研ぎ澄ませ。",
+    description: "細いポストとAIキーパーに挑む。",
+    stages: STAGES_B,
+  },
+  {
+    id: "c" as const,
+    symbol: "γ",
+    name: "PRESSURE",
+    label: "残り一球が、おもしろい。",
+    description: "球数制限、ビンゴ、スコアアタック。",
+    stages: STAGES_C,
+  },
+  {
+    id: "d" as const,
+    symbol: "δ",
+    name: "WIND READER",
+    label: "風まで、味方に。",
+    description: "横風と向かい風を読む10ミッション。",
+    stages: STAGES_D,
+  },
+];
+const INITIAL: GameState = {
   mode: null,
-  phase: 'aiming',
+  phase: "aiming",
   score: 0,
   attempts: 0,
   lastResult: null,
   power: 0,
   curve: 0,
-  stageSet: 'a',
+  stageSet: "a",
   stageIndex: 0,
   stageCount: 0,
-  stageName: '',
-  mission: '',
+  stageName: "",
+  mission: "",
   stageAttempts: 0,
   shotLimit: 0,
   shotsLeft: 0,
-  progressText: '',
+  progressText: "",
   stageCleared: false,
   allCleared: false,
   windX: 0,
   windZ: 0,
 };
-
-/** ステージセット記号 */
-const SET_SYMBOL: Record<StageSet, string> = { a: 'α', b: 'β', c: 'γ', d: 'δ' };
-
-/** HUD用の風表示テキスト（例 "→ 横風 5m/s / 向かい風 8m/s"） */
-const windLabel = (x: number, z: number): string => {
-  const parts: string[] = [];
-  if (x !== 0) parts.push(`${x > 0 ? '→' : '←'} 横風 ${Math.abs(x)}m/s`);
-  if (z !== 0) parts.push(`${z > 0 ? '向かい風' : '追い風'} ${Math.abs(z)}m/s`);
-  return parts.join(' ・ ');
-};
+const windLabel = (x: number, z: number) =>
+  [
+    x ? `${x > 0 ? "→" : "←"} 横風 ${Math.abs(x)} m/s` : "",
+    z ? `${z > 0 ? "向かい風" : "追い風"} ${Math.abs(z)} m/s` : "",
+  ]
+    .filter(Boolean)
+    .join(" / ") || "無風";
 
 export default function App() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const gameRef = useRef<Game | null>(null);
-  const curveBarRef = useRef<HTMLDivElement>(null);
-  const [state, setState] = useState<GameState>(INITIAL_STATE);
+  const container = useRef<HTMLDivElement>(null);
+  const game = useRef<Game | null>(null);
+  const [state, setState] = useState<GameState>(INITIAL);
+  const [progress, setProgress] = useState(() => {
+    try {
+      return parseProgress(localStorage.getItem(SAVE_KEY));
+    } catch {
+      return emptyProgress();
+    }
+  });
+  const [selected, setSelected] = useState<StageSet>("a");
+  const [rush, setRush] = useState(false);
+  const rushRef = useRef(false);
+  const [history, setHistory] = useState<boolean[]>([]);
+  const previousAttempts = useRef(0);
+  const [help, setHelp] = useState(false);
+  const [control, setControl] = useState<"drag" | "precise">("drag");
+  const [shot, setShot] = useState({ aim: 0, elevation: 0.15, power: 0.65 });
+  const [saveUnavailable, setSaveUnavailable] = useState(false);
+  const rushDone = rush && state.mode === "free" && state.attempts >= 10;
+  const playing = state.mode !== null;
+  const currentSet = SETS.find((s) => s.id === selected)!;
+  const cleared = Object.values(progress.stages).reduce(
+    (n, stages) => n + Object.keys(stages ?? {}).length,
+    0,
+  );
 
   useEffect(() => {
-    if (!containerRef.current) return;
-    const game = new Game(containerRef.current, { onStateChange: setState });
-    gameRef.current = game;
-    // 開発時のみ：コンソールから任意ステージを開始できるよう公開（例: game.startStage('b', 4)）
-    if (import.meta.env.DEV) {
-      (window as unknown as { game: Game }).game = game;
-    }
+    if (!container.current) return;
+    const instance = new Game(container.current, {
+      onStateChange: (next) => {
+        setState(next);
+        if (next.mode === "free" && next.attempts > previousAttempts.current) {
+          setHistory((old) => [...old.slice(-9), next.lastResult === "goal"]);
+          if (rushRef.current && next.attempts === 10)
+            setProgress((old) => ({
+              ...old,
+              bestRush: Math.max(old.bestRush, next.score),
+            }));
+        }
+        previousAttempts.current = next.attempts;
+        if (next.mode === "stage" && next.stageCleared)
+          setProgress((old) =>
+            recordClear(
+              old,
+              next.stageSet,
+              next.stageIndex,
+              next.stageAttempts,
+            ),
+          );
+      },
+    });
+    game.current = instance;
+    if (import.meta.env.DEV)
+      (window as unknown as { game: Game }).game = instance;
     return () => {
-      game.dispose();
-      gameRef.current = null;
+      instance.dispose();
+      game.current = null;
     };
   }, []);
 
-  /** カーブバー上のポインタ位置（左端=-1, 中央=0, 右端=+1）を Game に渡す */
-  const applyCurveFromPointer = (clientX: number) => {
-    const bar = curveBarRef.current;
-    if (!bar) return;
-    const rect = bar.getBoundingClientRect();
-    const ratio = (clientX - rect.left) / rect.width; // 0〜1
-    gameRef.current?.setCurve((ratio - 0.5) * 2);
-  };
-
-  const handleCurveDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    applyCurveFromPointer(e.clientX);
-  };
-
-  const handleCurveMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      applyCurveFromPointer(e.clientX);
+  useEffect(() => {
+    game.current?.setMuted(progress.muted);
+    game.current?.setTrail(progress.trail);
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(progress));
+      setSaveUnavailable(false);
+    } catch {
+      setSaveUnavailable(true);
     }
-  };
+  }, [progress]);
 
-  const inStage = state.mode === 'stage';
-  const playing = state.mode !== null;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (help) setHelp(false);
+        else game.current?.returnToMenu();
+        return;
+      }
+      if (help && event.key === "Tab") {
+        event.preventDefault();
+        return;
+      }
+      if (
+        event.target instanceof HTMLElement &&
+        ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)
+      )
+        return;
+      if (!playing || help || rushDone || state.stageCleared) return;
+      if (event.key.toLowerCase() === "r") game.current?.retryShot();
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        game.current?.setCurve(
+          state.curve + (event.key === "ArrowLeft" ? -0.1 : 0.1),
+        );
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [playing, help, rushDone, state.stageCleared, state.curve]);
+
+  const startFree = (challenge: boolean) => {
+    rushRef.current = challenge;
+    setRush(challenge);
+    setHistory([]);
+    previousAttempts.current = 0;
+    game.current?.startFreePlay(challenge ? 10 : 0);
+  };
+  const startStage = (set: StageSet, index: number) => {
+    rushRef.current = false;
+    setRush(false);
+    setHistory([]);
+    game.current?.startStage(set, index);
+  };
+  const precisionShot = () => {
+    game.current?.configureShot(shot.aim, shot.elevation, shot.power);
+    game.current?.kickShot();
+  };
+  const streak = history.reduce((count, goal) => (goal ? count + 1 : 0), 0);
 
   return (
     <div className="app">
-      {/* 3D 描画はこのコンテナに Game クラスが canvas を挿入する */}
-      <div ref={containerRef} className="canvas-container" />
-
-      {/* タイトル画面 */}
-      {state.mode === null && (
-        <div className="title-screen">
-          <h1 className="title-logo">⚽ Free Kick 3D</h1>
-          <p className="title-sub">モードを選んでキックオフ！</p>
-          <div className="title-buttons">
-            <button
-              className="menu-btn primary"
-              onClick={() => gameRef.current?.startFreePlay()}
-            >
-              フリープレイ
-            </button>
-            <button
-              className="menu-btn"
-              onClick={() => gameRef.current?.startStage('a', 0)}
-            >
-              ステージモード-α
-            </button>
-            <button
-              className="menu-btn beta"
-              onClick={() => gameRef.current?.startStage('b', 0)}
-            >
-              ステージモード-β
-              <span className="btn-badge">高難度</span>
-            </button>
-            <button
-              className="menu-btn gamma"
-              onClick={() => gameRef.current?.startStage('c', 0)}
-            >
-              ステージモード-γ
-              <span className="btn-badge">球数制限</span>
-            </button>
-            <button
-              className="menu-btn delta"
-              onClick={() => gameRef.current?.startStage('d', 0)}
-            >
-              ステージモード-δ
-              <span className="btn-badge">風</span>
-            </button>
-          </div>
-
-          {/* 成長過程アーカイブ：過去バージョンで遊ぶ */}
-          <div className="archive-links">
-            <a className="archive-link" href={`${import.meta.env.BASE_URL}v1/`}>
-              🕹️ 初期バージョン（v1）
-            </a>
-            <a className="archive-link" href={`${import.meta.env.BASE_URL}v2/`}>
-              🕹️ ひとつ前のバージョン（v2）
-            </a>
-          </div>
-          <p className="archive-note">成長過程のアーカイブ版で遊べます</p>
-
-          {/* 開発時のみ：任意ステージへジャンプ（テスト用） */}
-          {import.meta.env.DEV && (
-            <div className="dev-jump">
-              <div className="dev-jump-label">DEV: ステージへジャンプ</div>
-              {(['a', 'b', 'c', 'd'] as const).map((set) => (
-                <div className="dev-jump-row" key={set}>
-                  <span className="dev-jump-set">{SET_SYMBOL[set]}</span>
-                  {Array.from({ length: 10 }, (_, i) => (
+      <div ref={container} className="canvas-container" />
+      {!playing ? (
+        <main className="lobby">
+          <div className="lobby-inner">
+            <header className="brand">
+              <span className="brand-mark">↗</span>
+              <span>FREE KICK LAB</span>
+              <span className="version">ver.g.1 / CODEX</span>
+            </header>
+            <div className="lobby-layout">
+              <section className="hero">
+                <div className="eyebrow">
+                  <span className="live-dot" /> YOUR NEXT PERFECT SHOT
+                </div>
+                <h1>
+                  一球に、
+                  <br />
+                  <span>夢中になれ。</span>
+                </h1>
+                <p className="hero-copy">
+                  狙う。曲げる。風を読む。
+                  <br />
+                  18メートル先のゴールへ、あなただけの一球を。
+                </p>
+                <div className="quick-play">
+                  <button
+                    className="primary-btn"
+                    onClick={() => startFree(false)}
+                  >
+                    フリープレイ <span>↗</span>
+                  </button>
+                  <button className="rush-btn" onClick={() => startFree(true)}>
+                    10球ラッシュ <span>→</span>
+                  </button>
+                </div>
+                <div className="profile">
+                  <div>
+                    <strong>
+                      {String(cleared).padStart(2, "0")}
+                      <small> / 40</small>
+                    </strong>
+                    <span>ステージクリア</span>
+                  </div>
+                  <div>
+                    <strong>
+                      {progress.bestRush}
+                      <small> / 10</small>
+                    </strong>
+                    <span>ラッシュ自己ベスト</span>
+                  </div>
+                  <button className="text-btn" onClick={() => setHelp(true)}>
+                    遊び方を見る ↗
+                  </button>
+                </div>
+                <div className="archive">
+                  <span>THE COLLECTION / CLAUDE CODE</span>
+                  <div>
+                    {[1, 2, 3].map((n) => (
+                      <a
+                        key={n}
+                        href={`${import.meta.env.BASE_URL}ver.c.${n}/`}
+                      >
+                        ver.c.{n} ↗
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              </section>
+              <section className="missions" aria-label="ステージ選択">
+                <div className="section-heading">
+                  <span>CHOOSE YOUR CHALLENGE</span>
+                  <span>40 STAGES</span>
+                </div>
+                <div
+                  className="set-tabs"
+                  role="tablist"
+                  aria-label="チャレンジの種類"
+                >
+                  {SETS.map((s) => (
                     <button
-                      key={`${set}${i}`}
-                      onClick={() => gameRef.current?.startStage(set, i)}
+                      key={s.id}
+                      role="tab"
+                      aria-selected={selected === s.id}
+                      aria-controls="stage-panel"
+                      id={`tab-${s.id}`}
+                      onClick={() => setSelected(s.id)}
                     >
-                      {i + 1}
+                      <b>{s.symbol}</b>
+                      <span>{s.name}</span>
                     </button>
                   ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* HUD（プレイ中のみ） */}
-      {playing && (
-        <div className="hud">
-          {inStage ? (
-            <div className="stage-info">
-              <div className="stage-no">
-                STAGE {SET_SYMBOL[state.stageSet]}-{state.stageIndex + 1}
-                <span className="stage-total"> / {state.stageCount}</span>
-              </div>
-              <div className="stage-name">{state.stageName}</div>
-              <div className="stage-mission">🎯 {state.mission}</div>
-              {(state.windX !== 0 || state.windZ !== 0) && (
-                <div className="stage-wind">
-                  💨 {windLabel(state.windX, state.windZ)}
+                <div
+                  id="stage-panel"
+                  role="tabpanel"
+                  aria-labelledby={`tab-${selected}`}
+                >
+                  <div className="mission-title">
+                    <span className="set-symbol">{currentSet.symbol}</span>
+                    <div>
+                      <h2>{currentSet.label}</h2>
+                      <p>{currentSet.description}</p>
+                    </div>
+                  </div>
+                  <div className="stage-grid">
+                    {currentSet.stages.map((stage, index) => {
+                      const best = progress.stages[selected]?.[index];
+                      return (
+                        <button
+                          className={`stage-card${best ? " complete" : ""}`}
+                          key={stage.id}
+                          onClick={() => startStage(selected, index)}
+                          aria-label={`ステージ${index + 1} ${stage.name}${best ? ` クリア済み、ベスト${best}回` : ""}`}
+                        >
+                          <span className="stage-card-top">
+                            <b>{String(index + 1).padStart(2, "0")}</b>
+                            <span>
+                              {best ? "★".repeat(starsFor(best)) : "↗"}
+                            </span>
+                          </span>
+                          <span className="stage-card-name">{stage.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mission-footer">
+                    <span>どのステージからでも挑戦できます</span>
+                    <span>★ 最少挑戦回数を記録</span>
+                  </div>
                 </div>
-              )}
-              {state.shotLimit > 0 ? (
-                <div className="stage-limit">
-                  <span
-                    className={`shots-left${state.shotsLeft <= 1 ? ' danger' : ''}`}
-                  >
-                    ⚽ 残り {state.shotsLeft} / {state.shotLimit} 球
-                  </span>
-                  {state.progressText && (
-                    <span className="progress">📊 {state.progressText}</span>
+              </section>
+            </div>
+            <footer className="lobby-footer">
+              <span>REAL PHYSICS. YOUR INSTINCT.</span>
+              <div>
+                <button
+                  className="text-btn"
+                  onClick={() =>
+                    setProgress((p) => ({ ...p, muted: !p.muted }))
+                  }
+                >
+                  音 {progress.muted ? "OFF" : "ON"}
+                </button>
+                <span>
+                  {saveUnavailable
+                    ? "この環境では記録を保存できません"
+                    : "記録はこのブラウザに自動保存"}
+                </span>
+              </div>
+            </footer>
+          </div>
+        </main>
+      ) : (
+        <>
+          <header className="game-topbar">
+            <div className="mini-brand">
+              ↗ <span>FREE KICK LAB</span>
+              <small>ver.g.1</small>
+            </div>
+            <nav aria-label="プレイ操作">
+              <button
+                onClick={() => setProgress((p) => ({ ...p, muted: !p.muted }))}
+                aria-pressed={!progress.muted}
+              >
+                音 {progress.muted ? "OFF" : "ON"}
+              </button>
+              <button
+                onClick={() => setProgress((p) => ({ ...p, trail: !p.trail }))}
+                aria-pressed={progress.trail}
+              >
+                弾道 {progress.trail ? "ON" : "OFF"}
+              </button>
+              <button onClick={() => setHelp(true)} aria-label="遊び方">
+                ?
+              </button>
+              <button onClick={() => game.current?.returnToMenu()}>
+                メニュー ↗
+              </button>
+            </nav>
+          </header>
+          <section className="hud" aria-label="スコアとミッション">
+            <div className="eyebrow">
+              {state.mode === "stage"
+                ? `${SETS.find((s) => s.id === state.stageSet)!.name} / ${state.stageIndex + 1} OF 10`
+                : rush
+                  ? "10 SHOT RUSH"
+                  : "FREE TRAINING"}
+            </div>
+            {state.mode === "stage" ? (
+              <>
+                <h2>{state.stageName}</h2>
+                <p className="mission-copy">{state.mission}</p>
+                <div className="hud-stats">
+                  <div>
+                    <strong>{state.stageAttempts}</strong>
+                    <span>挑戦回数</span>
+                  </div>
+                  {state.shotLimit > 0 && (
+                    <div>
+                      <strong className={state.shotsLeft <= 1 ? "danger" : ""}>
+                        {state.shotsLeft}
+                        <small> / {state.shotLimit}</small>
+                      </strong>
+                      <span>残り球数</span>
+                    </div>
                   )}
                 </div>
+                {state.progressText && (
+                  <p className="progress-copy">{state.progressText}</p>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="hud-stats">
+                  <div>
+                    <strong>{String(state.score).padStart(2, "0")}</strong>
+                    <span>GOALS</span>
+                  </div>
+                  <div>
+                    <strong>
+                      {rush ? Math.max(0, 10 - state.attempts) : state.attempts}
+                    </strong>
+                    <span>{rush ? "残り球数" : "SHOTS"}</span>
+                  </div>
+                </div>
+                <p className="progress-copy">
+                  {state.attempts
+                    ? Math.round((state.score / state.attempts) * 100)
+                    : 0}
+                  % 成功率 <span> / 直近{streak}連続ゴール</span>
+                </p>
+                <div className="shot-history" aria-label="直近10球の結果">
+                  {Array.from({ length: 10 }, (_, i) => (
+                    <span
+                      key={i}
+                      className={
+                        history[i] === undefined
+                          ? ""
+                          : history[i]
+                            ? "hit"
+                            : "miss"
+                      }
+                    >
+                      {history[i] === undefined ? "·" : history[i] ? "●" : "×"}
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
+            <div className="wind-chip">
+              {windLabel(state.windX, state.windZ)}
+            </div>
+          </section>
+          {!rushDone && !state.stageCleared && (
+            <section className="shot-controls" aria-label="シュート操作">
+              <div className="controls-heading">
+                <div className="control-tabs">
+                  <button
+                    aria-pressed={control === "drag"}
+                    onClick={() => setControl("drag")}
+                  >
+                    ドラッグ
+                  </button>
+                  <button
+                    aria-pressed={control === "precise"}
+                    onClick={() => setControl("precise")}
+                  >
+                    精密照準
+                  </button>
+                </div>
+                <span className="phase-label">
+                  {state.phase === "aiming"
+                    ? "READY TO KICK"
+                    : state.phase === "shooting"
+                      ? "BALL IN FLIGHT"
+                      : "NEXT SHOT…"}
+                </span>
+              </div>
+              {control === "precise" ? (
+                <div className="precision-grid">
+                  {(
+                    [
+                      {
+                        key: "aim",
+                        label: "左右",
+                        min: -1,
+                        max: 1,
+                        display: `${Math.round(shot.aim * 30)}°`,
+                      },
+                      {
+                        key: "elevation",
+                        label: "高さ",
+                        min: 0,
+                        max: 1,
+                        display: `${Math.round(8 + shot.elevation * 32)}°`,
+                      },
+                      {
+                        key: "power",
+                        label: "強さ",
+                        min: 0.08,
+                        max: 1,
+                        display: `${Math.round(shot.power * 100)}%`,
+                      },
+                    ] as const
+                  ).map((input) => (
+                    <label key={input.key}>
+                      {input.label}
+                      <b>{input.display}</b>
+                      <input
+                        type="range"
+                        min={input.min}
+                        max={input.max}
+                        step="0.01"
+                        value={shot[input.key]}
+                        disabled={state.phase !== "aiming"}
+                        onChange={(e) => {
+                          const updated = {
+                            ...shot,
+                            [input.key]: Number(e.target.value),
+                          };
+                          setShot(updated);
+                          game.current?.configureShot(
+                            updated.aim,
+                            updated.elevation,
+                            updated.power,
+                          );
+                        }}
+                      />
+                    </label>
+                  ))}
+                </div>
               ) : (
-                <div className="stage-attempts">挑戦 {state.stageAttempts} 回</div>
+                <div className="power-row">
+                  <span>POWER</span>
+                  <div className="power-track">
+                    <div style={{ width: `${state.power * 100}%` }} />
+                  </div>
+                  <b>{Math.round(state.power * 100)}%</b>
+                </div>
               )}
-            </div>
-          ) : (
-            <div className="scoreboard">
-              <span className="goals">⚽ {state.score}</span>
-              <span className="attempts">/ {state.attempts} 本</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* メニューに戻るボタン（プレイ中） */}
-      {playing && (
-        <button
-          className="back-btn"
-          onClick={() => gameRef.current?.returnToMenu()}
-        >
-          ☰ メニュー
-        </button>
-      )}
-
-      {/* 蹴り直しボタン（プレイ中・狙う前以外で表示。結果待ちを飛ばせる） */}
-      {playing && state.phase !== 'aiming' && !state.stageCleared && (
-        <button
-          className="retry-btn"
-          onClick={() => gameRef.current?.retryShot()}
-        >
-          ⟳ 蹴り直し
-        </button>
-      )}
-
-      {/* パワー／カーブメーター（プレイ中） */}
-      {playing && (
-        <div className="power-meter">
-          <div className="power-label">POWER</div>
-          <div className="power-bar">
-            <div
-              className="power-fill"
-              style={{ width: `${state.power * 100}%` }}
-            />
-          </div>
-
-          <div className="curve-label">CURVE</div>
-          <div
-            ref={curveBarRef}
-            className="curve-bar interactive"
-            onPointerDown={handleCurveDown}
-            onPointerMove={handleCurveMove}
-          >
-            <div className="curve-center" />
-            <div
-              className="curve-fill"
-              style={{
-                left: state.curve >= 0 ? '50%' : `${50 + state.curve * 50}%`,
-                width: `${Math.abs(state.curve) * 50}%`,
-              }}
-            />
-            <div
-              className="curve-thumb"
-              style={{ left: `${50 + state.curve * 50}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* 結果バナー（失敗・フリープレイ用） */}
-      {state.lastResult && !state.stageCleared && (
-        <div
-          className={`result-banner ${
-            state.lastResult === 'goal'
-              ? 'goal'
-              : state.lastResult === 'fail'
-                ? 'fail'
-                : 'miss'
-          }`}
-        >
-          {state.lastResult === 'goal'
-            ? 'GOAL! ⚽'
-            : state.lastResult === 'fail'
-              ? 'STAGE FAILED… 最初から'
-              : 'MISS…'}
-        </div>
-      )}
-
-      {/* ステージクリア／全クリアのオーバーレイ */}
-      {inStage && state.stageCleared && (
-        <div className="overlay">
-          {state.allCleared ? (
-            <>
-              <div className="overlay-title gold">ALL CLEAR! 🎉</div>
-              <p className="overlay-text">全ステージ制覇おめでとう！</p>
-              <button
-                className="menu-btn primary"
-                onClick={() => gameRef.current?.returnToMenu()}
-              >
-                メニューに戻る
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="overlay-title">STAGE CLEAR! ⚽</div>
-              <p className="overlay-text">{state.stageName} クリア！</p>
-              <div className="overlay-buttons">
+              <div className="curve-row">
+                <label htmlFor="curve">
+                  CURVE{" "}
+                  <span>
+                    {state.curve === 0
+                      ? "STRAIGHT"
+                      : `${state.curve < 0 ? "←" : "→"} ${Math.round(Math.abs(state.curve) * 100)}%`}
+                  </span>
+                </label>
+                <input
+                  id="curve"
+                  type="range"
+                  min="-1"
+                  max="1"
+                  step="0.01"
+                  value={state.curve}
+                  disabled={state.phase !== "aiming"}
+                  onChange={(e) =>
+                    game.current?.setCurve(Number(e.target.value))
+                  }
+                />
                 <button
-                  className="menu-btn primary"
-                  onClick={() => gameRef.current?.nextStage()}
+                  disabled={state.phase !== "aiming"}
+                  onClick={() => game.current?.setCurve(0)}
                 >
-                  次のステージへ
-                </button>
-                <button
-                  className="menu-btn"
-                  onClick={() => gameRef.current?.returnToMenu()}
-                >
-                  メニューに戻る
+                  0
                 </button>
               </div>
-            </>
+              <div className="controls-footer">
+                <span>
+                  {control === "drag"
+                    ? "ピッチを手前に引いて、離すとキック。"
+                    : "左右・高さ・強さを決めてキック。"}
+                </span>
+                {control === "precise" && (
+                  <button
+                    className="kick-btn"
+                    disabled={state.phase !== "aiming"}
+                    onClick={precisionShot}
+                  >
+                    キック ↗
+                  </button>
+                )}
+                <button
+                  className="retry-btn"
+                  onClick={() => game.current?.retryShot()}
+                >
+                  蹴り直す ↻
+                </button>
+              </div>
+            </section>
           )}
-        </div>
+          {state.lastResult && !rushDone && (
+            <div
+              className={`result-banner ${state.lastResult}`}
+              role="status"
+              key={`${state.attempts}-${state.lastResult}`}
+            >
+              <span>
+                {state.lastResult === "goal"
+                  ? "BEAUTIFUL."
+                  : state.lastResult === "fail"
+                    ? "TRY AGAIN."
+                    : "SO CLOSE."}
+              </span>
+              <small>
+                {state.lastResult === "goal"
+                  ? "GOAL / ナイスシュート！"
+                  : state.lastResult === "fail"
+                    ? "球数切れ。ステージを最初から。"
+                    : "次の一球で、決めよう。"}
+              </small>
+            </div>
+          )}
+          {(state.stageCleared || rushDone) && (
+            <div className="overlay">
+              <section className="result-card">
+                <div className="eyebrow">
+                  {rushDone
+                    ? "10 SHOT RUSH / COMPLETE"
+                    : state.allCleared
+                      ? "ALL 10 STAGES / COMPLETE"
+                      : "MISSION / COMPLETE"}
+                </div>
+                <h2>
+                  {rushDone
+                    ? `${state.score} / 10`
+                    : state.allCleared
+                      ? "ALL CLEAR."
+                      : "WELL PLAYED."}
+                </h2>
+                <div className="result-stars">
+                  {rushDone
+                    ? state.score >= 8
+                      ? "★★★"
+                      : state.score >= 5
+                        ? "★★"
+                        : "★"
+                    : "★".repeat(starsFor(state.stageAttempts))}
+                </div>
+                <p>
+                  {rushDone
+                    ? `自己ベスト ${progress.bestRush} / 10 · 成功率 ${state.score * 10}%`
+                    : `${state.stageName} · ${state.stageAttempts}回でクリア`}
+                </p>
+                <div className="result-actions">
+                  {rushDone ? (
+                    <button
+                      className="primary-btn"
+                      onClick={() => startFree(true)}
+                    >
+                      もう一度挑戦 ↗
+                    </button>
+                  ) : (
+                    !state.allCleared && (
+                      <button
+                        className="primary-btn"
+                        onClick={() => game.current?.nextStage()}
+                      >
+                        次のステージへ ↗
+                      </button>
+                    )
+                  )}
+                  <button
+                    className="secondary-btn"
+                    onClick={() => game.current?.returnToMenu()}
+                  >
+                    メニューに戻る
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
+        </>
       )}
-
-      {/* 操作説明（プレイ中） */}
-      {playing && (
-        <div className="instructions">
-          {inStage ? (
-            <p>🎯 {state.mission}</p>
-          ) : (
-            <p>👆 ボールを手前にドラッグして狙う（強く引くほどパワーUP）</p>
-          )}
-          <p>🍌 CURVEバーを左右に動かしてカーブ量を調整！ 離すとシュート</p>
+      {help && (
+        <div
+          className="overlay help-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="help-title"
+        >
+          <section className="help-card">
+            <div className="eyebrow">HOW TO PLAY</div>
+            <h2 id="help-title">理想の一球をつくろう。</h2>
+            <ol>
+              <li>
+                <b>引いて、狙う。</b>
+                <span>
+                  ピッチの上を手前にドラッグ。左右でコース、引く量で高さと強さを調整。
+                </span>
+              </li>
+              <li>
+                <b>曲げて、かわす。</b>
+                <span>
+                  CURVEを左右へ。0に戻すとストレート。照準中に調整できます。
+                </span>
+              </li>
+              <li>
+                <b>離して、決める。</b>
+                <span>
+                  指やマウスを離すとキック。精密照準ではスライダーとキックボタンを使えます。
+                </span>
+              </li>
+            </ol>
+            <p>
+              10球ラッシュは10本の成功数を競います。ステージは1回でクリアすると★★★、3回以内で★★。蹴り直しは飛行中なら1失敗として数えます。
+            </p>
+            <p className="keyboard-tip">
+              PC: ← → カーブ / R 蹴り直し / Esc メニュー
+            </p>
+            <button
+              className="primary-btn"
+              autoFocus
+              onClick={() => setHelp(false)}
+            >
+              わかった、キックオフ ↗
+            </button>
+          </section>
         </div>
       )}
     </div>

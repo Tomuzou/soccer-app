@@ -37,3 +37,7 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# Automated browser checks
+test-results/
+playwright-report/

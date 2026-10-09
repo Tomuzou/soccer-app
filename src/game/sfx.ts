@@ -4,6 +4,15 @@
  * 遅延生成する。各メソッドは短い間隔での連打を内部でスロットリングする。
  */
 export class Sfx {
+  private muted = false;
+
+  setMuted(muted: boolean): void { this.muted = muted; }
+
+  dispose(): void {
+    if (this.ctx) void this.ctx.close();
+    this.ctx = null;
+    this.master = null;
+  }
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   /** 効果音ごとの最終再生時刻（スロットリング用） */
@@ -25,6 +34,7 @@ export class Sfx {
 
   /** minInterval 秒以内の連打を弾く。再生可なら ctx を返す */
   private gate(key: string, minInterval: number): AudioContext | null {
+    if (this.muted) return null;
     const ctx = this.ensure();
     if (!ctx) return null;
     const now = ctx.currentTime;

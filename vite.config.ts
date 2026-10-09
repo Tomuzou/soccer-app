@@ -3,8 +3,8 @@ import react from '@vitejs/plugin-react';
 
 // 本番ビルド時のみ GitHub Pages 用のサブパスを base にする。
 // 開発サーバー(dev)では '/' のままにして localhost で素直に開けるようにする。
-export default defineConfig(({ command }) => ({
-  base: command === 'build' ? '/soccer-app/' : '/',
+export default defineConfig(({ command, isPreview }) => ({
+  base: command === 'build' || isPreview ? '/soccer-app/' : '/',
   plugins: [react()],
   build: {
     rollupOptions: {

@@ -1,5 +1,20 @@
 # Soccer Free Kick 3D — CLAUDE.md
 
+## 現行リリース：ver.g.1（FREE KICK LAB / Codex）
+
+- 共通仕様はこのファイルで管理する。`AGENTS.md`はこのファイルを読むための入口。
+- 現行UIは濃紺・ミント色のロビー、40ステージ選択、HUD、ドラッグ／精密照準、操作ガイド。
+- 10球ラッシュは `startFreePlay(10)` で開始。Game側が10球終了後のリセット・追加キックを止め、App側が結果画面を表示する。通常は `startFreePlay()`。
+- `configureShot(aim, elevation, power)` と `kickShot()` は精密照準用の公開API。音と弾道は `setMuted` / `setTrail`。
+- `src/game/progress.ts` が保存データの検証、クリア最少回数、星評価を担当。保存キーは `free-kick-lab.g1`。保存できない環境でもゲームを継続する。
+- 星評価は1回クリア=3、3回以内=2、それ以外=1。ステージの途中進捗は保存しない。
+- `npm test` が記録検証、`npm run test:browser` が実際のシュート・ラッシュ・スマホUI・入力の確認、`npm run verify:archives` がビルド後の全版のアセットとリンク検証。
+- GitHub Pagesの最新版は `/soccer-app/`、凍結Codex版は `/soccer-app/ver.g.1/`。
+- Claude Code版は旧v1→`/ver.c.1/`、旧v2→`/ver.c.2/`、改良前のHEAD（5d2df35）→`/ver.c.3/`。旧 `/v1/` と `/v2/` も維持する。
+- `public/ver.c.3/` と `public/ver.g.1/` は凍結ビルド。通常の改修で上書きしない。版の保存はindexとassetsのみをコピーし、既存アーカイブを再帰的に複製しない。
+- 各版から最新版へ戻れるリンクと、凍結版内の過去版リンク用リダイレクトを維持する。
+- 以下の物理・ステージ仕様と、旧v1/v2の由来も継続して参照する。
+
 ## プロジェクト概要
 
 ブラウザで動作する3Dフリーキックゲーム。
@@ -23,7 +38,7 @@ src/
     sfx.ts       # 効果音（WebAudio合成。音源ファイル不使用。キック/ポスト/バウンド/ネット/歓声/ホイッスル）
   types/
     index.ts     # GameState / GamePhase / StageDefinition / StageSet などの型定義
-  App.tsx        # UIオーバーレイ（タイトル・スコア/ステージHUD・風表示・パワー/カーブメーター・クリア表示・過去版リンク）
+  App.tsx        # FREE KICK LAB UI、40ステージ選択、10球ラッシュ、ブラウザ記録、精密照準
   App.css        # UIオーバーレイのスタイル
   main.tsx       # エントリポイント
   index.css      # グローバルスタイル
@@ -76,7 +91,7 @@ npm run preview  # ビルド結果プレビュー
 - 成功判定は `finishStageShot` に集約。バー/ポストの接触は `ballBody` の `collide` イベント（`onBallCollide`）で記録するが、ポストは細く高速シュートがすり抜けるため `checkPostHits`（前フレーム→現在の線分スイープ）でも幾何的に補完する
 - 蹴り直し：`retryShot()` は飛行中なら `finishShot(false,false)` で失敗確定してからリセットする（蹴り直しは常に1失敗としてカウント）
 - クリア中は `stageCleared` を立て、自動リセットせず次操作（`nextStage`/`returnToMenu`）を待つ
-- ステージは無制限リトライ・進捗は保存しない（常にStage1から）
+- ステージは無制限リトライ。ver.g.1では全40ステージを選択可能。クリア記録と最少挑戦回数をブラウザに保存する（途中の累積ミッション進捗は保存しない）。
 
 ### γ（球数制限チャレンジ／`STAGES_C`）
 
