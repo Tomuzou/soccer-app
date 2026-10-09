@@ -1,14 +1,16 @@
+import type { ItemId } from "../game/items";
+
 /** ゲームのフェーズ */
-export type GamePhase = 'aiming' | 'shooting' | 'result';
+export type GamePhase = "aiming" | "shooting" | "result";
 
 /** ゲームモード（null=タイトル画面） */
-export type GameMode = 'free' | 'stage';
+export type GameMode = "free" | "stage";
 
 /** ステージセット（'a'=α / 'b'=β / 'c'=γ / 'd'=δ） */
-export type StageSet = 'a' | 'b' | 'c' | 'd';
+export type StageSet = "a" | "b" | "c" | "d";
 
 /** シュート結果（'fail'=制限球を使い切ってステージ失敗） */
-export type ShotResult = 'goal' | 'miss' | 'fail' | null;
+export type ShotResult = "goal" | "miss" | "fail" | null;
 
 /** GameクラスからReact側へ状態変化を通知するためのコールバック */
 export interface GameCallbacks {
@@ -39,10 +41,10 @@ export interface ScoreZone extends TargetZone {
  * - score: zones の得点を合計 need 点ぶん稼ぐ（同時に複数ヒットなら最高点を採用）
  */
 export type StageGoal =
-  | { type: 'quota'; need: number }
-  | { type: 'combo'; need: number }
-  | { type: 'bingo'; zones: TargetZone[] }
-  | { type: 'score'; need: number; zones: ScoreZone[] };
+  | { type: "quota"; need: number }
+  | { type: "combo"; need: number }
+  | { type: "bingo"; zones: TargetZone[] }
+  | { type: "score"; need: number; zones: ScoreZone[] };
 
 /** ステージ内の障害物（直方体）。move付きは往復、track付きはボールを追跡する。 */
 export interface ObstacleDef {
@@ -54,7 +56,7 @@ export interface ObstacleDef {
   d: number; // 奥行き
   /** 一定パターンで左右に往復する障害物（キーパー）の設定 */
   move?: {
-    axis: 'x';
+    axis: "x";
     range: number; // 中心からの片振り幅
     speed: number; // 往復の速さ（rad/s 相当）
   };
@@ -99,6 +101,7 @@ export interface StageDefinition {
 
 /** UIに表示するゲーム状態 */
 export interface GameState {
+  item: ItemId;
   /** 現在のモード（null=タイトル画面） */
   mode: GameMode | null;
   phase: GamePhase;

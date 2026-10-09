@@ -46,7 +46,17 @@ if (process.argv.includes("--snapshot-g1")) {
     throw new Error("Build with --base=/soccer-app/ver.g.1/ first");
   fs.mkdirSync("public/ver.g.1/assets", { recursive: true });
   fs.writeFileSync("public/ver.g.1/index.html", html);
-  for (const name of fs.readdirSync("dist/assets"))
+  const currentAssets = fs.readdirSync("dist/assets");
+  // ver.g.1 is intentionally updated in place; discard obsolete generated files.
+  const assetRoot = path.resolve('public/ver.g.1/assets');
+  for (const name of fs.readdirSync(assetRoot)) {
+    if (!currentAssets.includes(name) && /\.(?:js|css)$/.test(name)) {
+      const target = path.resolve(assetRoot, name);
+      if (path.dirname(target) !== assetRoot) throw new Error('Invalid asset path');
+      fs.unlinkSync(target);
+    }
+  }
+  for (const name of currentAssets)
     fs.copyFileSync(
       path.join("dist/assets", name),
       path.join("public/ver.g.1/assets", name),

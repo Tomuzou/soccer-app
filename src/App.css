@@ -1,8 +1,60 @@
 :root {
   --ink: #10252d;
   --mint: #c6f36b;
-  --panel: #10262de8;
+  --panel: #10262df5;
   --line: #ffffff20;
+}
+
+.item-kit {
+  margin: 10px 0;
+}
+.item-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+.item-options button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 34px;
+  padding: 5px 3px;
+  border: 1px solid #ffffff22;
+  border-radius: 6px;
+  color: #adc5ca;
+  background: #ffffff05;
+  font-size: 9px;
+}
+.item-options button[aria-pressed="true"] {
+  border-color: var(--mint);
+  color: var(--mint);
+  background: #c6f36b10;
+}
+.item-options button > span {
+  font-size: 15px;
+}
+.item-kit p {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 7px 0 0;
+  font-size: 9px;
+  line-height: 1.5;
+  color: #c5dcd3;
+}
+.item-kit p > span {
+  color: #8eaaaf;
+  font-size: 8px;
+}
+@media (max-width: 420px) {
+  .item-options button {
+    font-size: 8px;
+    gap: 2px;
+  }
+  .item-kit p > span {
+    display: none;
+  }
 }
 .app {
   position: relative;
@@ -422,7 +474,7 @@ button:not(:disabled):active {
   padding: 20px;
   max-width: 340px;
   pointer-events: none;
-  backdrop-filter: blur(14px);
+  backdrop-filter: none;
 }
 .hud h2 {
   font-size: 21px;
@@ -505,7 +557,7 @@ button:not(:disabled):active {
   transform: translateX(-50%);
   background: var(--panel);
   border: 1px solid var(--line);
-  backdrop-filter: blur(14px);
+  backdrop-filter: none;
   border-radius: 13px;
   padding: 14px 18px;
   width: min(460px, calc(100% - 32px));

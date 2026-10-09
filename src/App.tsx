@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Game } from "./game/Game";
+import { ITEMS } from "./game/items";
 import { STAGES_A, STAGES_B, STAGES_C, STAGES_D } from "./game/stages";
 import {
   emptyProgress,
@@ -46,6 +47,7 @@ const SETS = [
   },
 ];
 const INITIAL: GameState = {
+  item: "none",
   mode: null,
   phase: "aiming",
   score: 0,
@@ -476,6 +478,29 @@ export default function App() {
                       ? "BALL IN FLIGHT"
                       : "NEXT SHOT…"}
                 </span>
+              </div>
+              <div
+                className="item-kit"
+                role="group"
+                aria-label="シュートアイテム"
+              >
+                <div className="item-options">
+                  {ITEMS.map((item) => (
+                    <button
+                      key={item.id}
+                      aria-pressed={state.item === item.id}
+                      disabled={state.phase !== "aiming"}
+                      onClick={() => game.current?.setItem(item.id)}
+                    >
+                      <span>{item.icon}</span>
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+                <p>
+                  {ITEMS.find((item) => item.id === state.item)!.description}
+                  <span>一球につき1つ / 使わなくてもOK</span>
+                </p>
               </div>
               {control === "precise" ? (
                 <div className="precision-grid">
