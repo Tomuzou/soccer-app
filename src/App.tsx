@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Game } from "./game/Game";
 import { ITEMS } from "./game/items";
 import { STAGES_A, STAGES_B, STAGES_C, STAGES_D } from "./game/stages";
@@ -79,6 +79,7 @@ const windLabel = (x: number, z: number) =>
 
 export default function App() {
   const container = useRef<HTMLDivElement>(null);
+  const controls = useRef<HTMLElement>(null);
   const game = useRef<Game | null>(null);
   const [state, setState] = useState<GameState>(INITIAL);
   const [progress, setProgress] = useState(() => {
@@ -138,6 +139,34 @@ export default function App() {
       game.current = null;
     };
   }, []);
+
+  useLayoutEffect(() => {
+    const panel = controls.current;
+    const pitch = container.current;
+    if (!panel || !pitch) {
+      game.current?.setControlsBounds(null);
+      return;
+    }
+    const update = () => {
+      const rect = panel.getBoundingClientRect();
+      const canvas = pitch.getBoundingClientRect();
+      game.current?.setControlsBounds({
+        left: rect.left - canvas.left,
+        right: rect.right - canvas.left,
+        top: rect.top - canvas.top,
+      });
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(panel);
+    observer.observe(pitch);
+    window.addEventListener("resize", update);
+    update();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+      game.current?.setControlsBounds(null);
+    };
+  }, [playing, rushDone, state.stageCleared]);
 
   useEffect(() => {
     game.current?.setMuted(progress.muted);
@@ -200,7 +229,7 @@ export default function App() {
   const streak = history.reduce((count, goal) => (goal ? count + 1 : 0), 0);
 
   return (
-    <div className={`app${playing && !rushDone && !state.stageCleared ? " playing" : ""}`}>
+    <div className="app">
       <div ref={container} className="canvas-container" />
       {!playing ? (
         <main className="lobby">
@@ -381,7 +410,7 @@ export default function App() {
               </button>
             </nav>
           </header>
-          <section className="hud" aria-label="スコアとミッション">
+          <section className={`hud${state.mode === "free" ? " free-hud" : ""}`} aria-label="スコアとミッション">
             <div className="eyebrow">
               {state.mode === "stage"
                 ? `${SETS.find((s) => s.id === state.stageSet)!.name} / ${state.stageIndex + 1} OF 10`
@@ -455,7 +484,7 @@ export default function App() {
             </div>
           </section>
           {!rushDone && !state.stageCleared && (
-            <section className="shot-controls" aria-label="シュート操作">
+            <section ref={controls} className="shot-controls" aria-label="シュート操作">
               <div className="controls-heading">
                 <div className="control-tabs">
                   <button
@@ -488,6 +517,7 @@ export default function App() {
                   {ITEMS.map((item) => (
                     <button
                       key={item.id}
+                      title={item.description}
                       aria-pressed={state.item === item.id}
                       disabled={state.phase !== "aiming"}
                       onClick={() => game.current?.setItem(item.id)}

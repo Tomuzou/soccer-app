@@ -68,26 +68,6 @@
   inset: 0;
   cursor: crosshair;
 }
-/* Let the actual panel height determine the space available to the pitch. */
-.app.playing {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 12px;
-  padding-bottom: calc(20px + env(safe-area-inset-bottom));
-}
-.playing .canvas-container {
-  position: relative;
-  inset: auto;
-  min-width: 0;
-  min-height: 0;
-}
-.playing .shot-controls {
-  position: relative;
-  bottom: auto;
-  left: auto;
-  transform: none;
-  margin: 0 auto;
-}
 button,
 a,
 input {
@@ -573,14 +553,13 @@ button:not(:disabled):active {
 .shot-controls {
   position: absolute;
   bottom: calc(20px + env(safe-area-inset-bottom));
-  left: 50%;
-  transform: translateX(-50%);
+  right: calc(24px + env(safe-area-inset-right));
   background: var(--panel);
   border: 1px solid var(--line);
   backdrop-filter: none;
   border-radius: 13px;
   padding: 14px 18px;
-  width: min(460px, calc(100% - 32px));
+  width: min(420px, calc(44vw - 16px));
 }
 .controls-heading {
   display: flex;
@@ -886,9 +865,6 @@ input[type="range"] {
   }
 }
 @media (max-width: 760px) {
-  .app.playing {
-    padding-bottom: calc(12px + env(safe-area-inset-bottom));
-  }
   .lobby-inner {
     padding: 20px;
   }
@@ -994,6 +970,7 @@ input[type="range"] {
   }
   .shot-controls {
     bottom: calc(12px + env(safe-area-inset-bottom));
+    right: calc(12px + env(safe-area-inset-right));
     padding: 12px 14px;
   }
   .result-card,
@@ -1004,12 +981,58 @@ input[type="range"] {
     font-size: 8px;
   }
 }
-@media (max-height: 650px) and (max-width: 599px) {
+@media (max-width: 599px) {
+  .shot-controls {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: calc(100% - 24px);
+    display: grid;
+    gap: 4px;
+    padding: 8px 12px;
+  }
+  .shot-controls .item-kit,
+  .shot-controls .power-row,
+  .shot-controls .curve-row,
+  .shot-controls .precision-grid {
+    margin: 0;
+  }
+  .shot-controls .item-options button {
+    min-height: 28px;
+    padding: 3px;
+  }
+  .shot-controls .item-options button > span {
+    font-size: 12px;
+  }
+  .shot-controls .item-kit p,
+  .shot-controls .controls-footer > span {
+    display: none;
+  }
+  .shot-controls .control-tabs button {
+    padding: 4px 9px;
+  }
+  .shot-controls input[type="range"] {
+    height: 22px;
+  }
+  .shot-controls .precision-grid input {
+    margin-top: 0;
+  }
+  .shot-controls .curve-row button {
+    width: 24px;
+    height: 24px;
+  }
+  .shot-controls .controls-footer {
+    padding-top: 4px;
+    justify-content: flex-end;
+  }
+  .shot-controls .kick-btn {
+    padding: 6px 14px;
+  }
   .hud {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 4px 12px;
-    padding: 8px 10px;
+    gap: 2px 12px;
+    padding: 6px 10px;
     width: calc(100% - 24px);
   }
   .hud h2 {
@@ -1045,22 +1068,20 @@ input[type="range"] {
     font-size: 9px;
   }
   .wind-chip {
-    padding-top: 4px;
+    grid-column: 2;
+    grid-row: 4;
+    border-top: 0;
+    padding-top: 0;
+    text-align: right;
+  }
+  .hud:not(.free-hud) .progress-copy {
+    grid-column: 1;
+  }
+  .free-hud .wind-chip {
+    display: none;
   }
 }
 @media (max-height: 550px) and (min-width: 600px) {
-  .app.playing {
-    grid-template-rows: minmax(0, 1fr);
-    grid-template-columns: minmax(0, 1fr) min(360px, 44vw);
-    padding-right: calc(16px + env(safe-area-inset-right));
-    padding-bottom: calc(12px + env(safe-area-inset-bottom));
-  }
-  .playing .shot-controls {
-    right: auto;
-    bottom: auto;
-    width: 100%;
-    align-self: end;
-  }
   .lobby-layout {
     padding: 24px 0;
     align-items: start;
@@ -1078,7 +1099,7 @@ input[type="range"] {
   .hud {
     top: calc(58px + env(safe-area-inset-top));
     padding: 8px 10px;
-    max-width: calc(56% - 36px);
+    max-width: min(230px, 26vw);
   }
   .hud h2 {
     font-size: 12px;

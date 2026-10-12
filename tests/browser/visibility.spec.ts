@@ -37,7 +37,22 @@ async function ballLayout(page: Page) {
     const right = Math.max(...points.map((p) => p.x));
     const top = Math.min(...points.map((p) => p.y));
     const bottom = Math.max(...points.map((p) => p.y));
+    const goal = [-3.66, 3.66].flatMap((x) => [0, 2.44].map((y) => {
+      const point = game.ballMesh.position.clone().set(x, y, -18).project(game.camera);
+      return { x: pitch.left + (point.x + 1) * pitch.width / 2,
+        y: pitch.top + (1 - point.y) * pitch.height / 2 };
+    }));
+    const goalLeft = Math.min(...goal.map((p) => p.x));
+    const goalRight = Math.max(...goal.map((p) => p.x));
+    const goalTop = Math.min(...goal.map((p) => p.y));
+    const goalBottom = Math.max(...goal.map((p) => p.y));
     return {
+      fullPitch: pitch.left === 0 && pitch.top === 0 &&
+        pitch.width === innerWidth && pitch.height === innerHeight,
+      goalWidth: goalRight - goalLeft,
+      goalVisible: goalLeft >= 0 && goalRight <= innerWidth && goalTop >= 64 && goalBottom <= innerHeight &&
+        (goalRight <= hud.left || goalLeft >= hud.right || goalBottom <= hud.top || goalTop >= hud.bottom) &&
+        (goalRight <= panel.left || goalLeft >= panel.right || goalBottom <= panel.top || goalTop >= panel.bottom),
       insidePitch: left >= pitch.left && right <= pitch.right &&
         top >= pitch.top && bottom <= pitch.bottom,
       clearOfPanel: right + 12 <= panel.left || bottom + 12 <= panel.top,
@@ -56,22 +71,28 @@ test("ball stays visible when controls change height and the screen rotates", as
   await page.getByRole("button", { name: "フリープレイ ↗" }).click();
   for (const viewport of [
     { width: 1366, height: 900 },
+    { width: 1280, height: 720 },
+    { width: 600, height: 900 },
     { width: 390, height: 844 },
     { width: 320, height: 568 },
     { width: 844, height: 390 },
     { width: 667, height: 375 },
   ]) {
     await page.setViewportSize(viewport);
+    let goalWidth: number | undefined;
     for (const control of ["ドラッグ", "精密照準"]) {
       await page.getByRole("button", { name: control, exact: true }).click();
       for (const item of ["ノーマル", "豆つぶボール"]) {
         await page.getByRole("button", { name: item, exact: false }).click();
         await expect.poll(async () => {
           const layout = await ballLayout(page);
-          return [layout.insidePitch, layout.clearOfPanel, layout.exposed, layout.panelFits];
+          return [layout.fullPitch, layout.goalVisible, layout.insidePitch, layout.clearOfPanel, layout.exposed, layout.panelFits];
         }, { message: `${viewport.width}x${viewport.height}: ${control}, ${item}` })
-          .toEqual([true, true, true, true]);
+          .toEqual([true, true, true, true, true, true]);
       }
+      const layout = await ballLayout(page);
+      if (goalWidth !== undefined) expect(layout.goalWidth).toBeCloseTo(goalWidth, 2);
+      goalWidth = layout.goalWidth;
       await page.screenshot({ path: `test-results/visibility-${viewport.width}-${control}.png` });
     }
   }
@@ -98,8 +119,8 @@ test("stage mission HUD also leaves the ball visible on small screens", async ({
     await page.setViewportSize(viewport);
     await expect.poll(async () => {
       const layout = await ballLayout(page);
-      return [layout.insidePitch, layout.clearOfPanel, layout.exposed, layout.panelFits];
-    }).toEqual([true, true, true, true]);
+      return [layout.fullPitch, layout.goalVisible, layout.insidePitch, layout.clearOfPanel, layout.exposed, layout.panelFits];
+    }).toEqual([true, true, true, true, true, true]);
     await page.screenshot({ path: `test-results/visibility-stage-${viewport.width}.png` });
   }
 });

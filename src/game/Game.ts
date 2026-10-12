@@ -93,6 +93,7 @@ export class Game {
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
+  private controlsBounds: { left: number; right: number; top: number } | null = null;
   private world: CANNON.World;
 
   private ballMesh!: THREE.Mesh;
@@ -1976,10 +1977,62 @@ export class Game {
     this.sceneDirty = true;
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
+    if (!w || !h) return;
     this.camera.aspect = w / h;
-    // The canvas occupies the pitch area above/beside the controls.
     this.camera.updateProjectionMatrix();
+    this.updateCameraFraming();
     this.renderer.setSize(w, h);
+  }
+
+  /** Keep the full-size pitch, shifting its framing only where the panel overlaps the ball. */
+  setControlsBounds(bounds: { left: number; right: number; top: number } | null): void {
+    this.controlsBounds = bounds;
+    this.updateCameraFraming();
+    this.sceneDirty = true;
+  }
+
+  private updateCameraFraming(): void {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    if (!w || !h) return;
+    this.camera.clearViewOffset();
+    if (!this.controlsBounds) return;
+
+    // Frame the resting ball, not its moving position, so a shot never makes
+    // the projection jump. Keep the same FOV and apparent size of the goal.
+    const reference = this.camera.clone();
+    reference.lookAt(0, 1, GOAL_Z);
+    reference.updateMatrixWorld();
+    let left = w, right = 0, bottom = 0;
+    for (const x of [-BALL_RADIUS, BALL_RADIUS]) {
+      for (const y of [0, BALL_RADIUS * 2]) {
+        for (const z of [-BALL_RADIUS, BALL_RADIUS]) {
+          const point = new THREE.Vector3(x, y, z).project(reference);
+          const px = (point.x + 1) * w / 2;
+          left = Math.min(left, px);
+          right = Math.max(right, px);
+          bottom = Math.max(bottom, (1 - point.y) * h / 2);
+        }
+      }
+    }
+    const panel = this.controlsBounds;
+    let offsetX = 0, offsetY = 0;
+    if (panel.left > w / 2) {
+      let goalRight = 0, goalBottom = 0;
+      for (const x of [-GOAL_WIDTH / 2, GOAL_WIDTH / 2]) {
+        for (const y of [0, GOAL_HEIGHT]) {
+          const point = new THREE.Vector3(x, y, GOAL_Z).project(reference);
+          goalRight = Math.max(goalRight, (point.x + 1) * w / 2);
+          goalBottom = Math.max(goalBottom, (1 - point.y) * h / 2);
+        }
+      }
+      if (goalBottom + 16 > panel.top)
+        offsetX = Math.max(0, goalRight + 16 - panel.left);
+    }
+    if (right - offsetX + 16 > panel.left && left - offsetX - 16 < panel.right) {
+      offsetY = Math.max(0, bottom - panel.top + 28);
+    }
+    if (offsetX || offsetY) this.camera.setViewOffset(w, h, offsetX, offsetY, w, h);
   }
 
   /** クリーンアップ。React の useEffect の戻り値で呼ぶ。 */
