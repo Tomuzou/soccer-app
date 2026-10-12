@@ -7,6 +7,9 @@ export type GameMode = 'free' | 'stage';
 /** ステージセット（'a'=α / 'b'=β / 'c'=γ / 'd'=δ） */
 export type StageSet = 'a' | 'b' | 'c' | 'd';
 
+/** スキルボール（キック前に選ぶ球質。定義は game/items.ts） */
+export type ItemId = 'normal' | 'knuckle' | 'drive' | 'cannon' | 'ghost';
+
 /** シュート結果（'fail'=制限球を使い切ってステージ失敗） */
 export type ShotResult = 'goal' | 'miss' | 'fail' | null;
 
@@ -135,4 +138,13 @@ export interface GameState {
   /** 現在ステージの風速（m/s）。0なら無風。HUDの風向き表示に使う */
   windX: number;
   windZ: number;
+  // --- ver.c.4 ---
+  /** 選択中のスキルボール */
+  item: ItemId;
+  /** 直前のキックの球速（km/h）。0なら未キック */
+  shotKmh: number;
+  /** フリープレイの現在の連続ゴール数 */
+  streak: number;
+  /** 現在のステージ挑戦中に一度でもスキルボールを使ったか（使わずにクリアで👑） */
+  stageItemUsed: boolean;
 }

@@ -4,6 +4,7 @@ import type {
   GameCallbacks,
   GamePhase,
   GameState,
+  ItemId,
   ObstacleDef,
   ScoreZone,
   StageDefinition,
@@ -13,6 +14,7 @@ import type {
 } from '../types';
 import { STAGES_A, STAGES_B, STAGES_C, STAGES_D } from './stages';
 import { Sfx } from './sfx';
+import { skillBall } from './items';
 
 // --- ゲーム定数（単位はメートル） ---
 const GOAL_WIDTH = 7.32; // 実寸のゴール幅
@@ -47,6 +49,16 @@ const ROLL_RESIST = 0.07;
 const FLIGHT_LINEAR_DAMPING = 0.01;
 /** スピンの空気減衰（実球の回転は飛行中ほとんど落ちない） */
 const FLIGHT_ANGULAR_DAMPING = 0.08;
+
+/** 物理の固定サブステップ（毎ステップ空力を加え、フレームレートに左右されない弾道にする） */
+const PHYS_STEP = 1 / 120;
+/** ドライブの縦回転（rad/s）。マグヌス力で重力の約2倍の下向き加速度を生む */
+const DRIVE_TOPSPIN = 55;
+/** ナックルの揺れ加速度（m/s²）横・縦 */
+const KNUCKLE_ACC_X = 12;
+const KNUCKLE_ACC_Y = 7;
+/** 弾道ラインの最大点数（固定バッファを使い回す） */
+const TRAIL_POINTS = 360;
 
 const MAX_SHOT_TIME = 6; // 1ショットの最大飛行時間（秒）。跳ね返り続けを強制終了する保険
 
@@ -170,6 +182,22 @@ export class Game {
   /** 制限球を使い切って失敗 → 結果表示後にステージ先頭へ戻すフラグ */
   private stageFailPending = false;
 
+  // --- ver.c.4：スキルボール・弾道・固定ステップ ---
+  /** 固定の壁（ゴーストがすり抜ける対象。キーパーは含めない） */
+  private wallBodies = new Set<CANNON.Body>();
+  /** このショットでゴースト効果が有効か */
+  private ghostActive = false;
+  /** ナックルの揺れ用の位相（ショットごとにランダム） */
+  private knucklePhase = [0, 0, 0, 0];
+  /** キックからの経過時間（物理時間） */
+  private flightTime = 0;
+  private physicsAccumulator = 0;
+  private trailLine!: THREE.Line;
+  private trailPositions = new Float32Array(TRAIL_POINTS * 3);
+  private trailCount = 0;
+  private trailEnabled = true;
+  private aeroForce = new CANNON.Vec3();
+
   // 飛行中の接触フラグ（ショットごとにリセット）
   private shotHitBar = false;
   private shotHitPostL = false;
@@ -197,6 +225,10 @@ export class Game {
     allCleared: false,
     windX: 0,
     windZ: 0,
+    item: 'normal',
+    shotKmh: 0,
+    streak: 0,
+    stageItemUsed: false,
   };
 
   constructor(container: HTMLElement, callbacks: GameCallbacks) {
@@ -205,7 +237,8 @@ export class Game {
 
     // --- レンダラー ---
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    // 高DPI端末で描画負荷が跳ね上がらないよう上限を設ける
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -233,6 +266,7 @@ export class Game {
     this.setupGoal();
     this.setupBall();
     this.setupAimArrow();
+    this.setupTrail();
     // タイトル画面では照準を出さない
     this.aimArrow.visible = false;
 
@@ -705,12 +739,42 @@ export class Game {
     this.scene.add(this.aimArrow);
   }
 
+  /** 弾道ライン（直前のショットの軌跡）。固定長バッファを drawRange で伸ばす */
+  private setupTrail(): void {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.trailPositions, 3));
+    geo.setDrawRange(0, 0);
+    this.trailLine = new THREE.Line(
+      geo,
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 }),
+    );
+    this.trailLine.frustumCulled = false;
+    this.scene.add(this.trailLine);
+  }
+
+  private clearTrail(): void {
+    this.trailCount = 0;
+    this.trailLine.geometry.setDrawRange(0, 0);
+  }
+
+  private pushTrailPoint(): void {
+    if (this.trailCount >= TRAIL_POINTS) return;
+    const p = this.ballBody.position;
+    this.trailPositions.set([p.x, p.y, p.z], this.trailCount * 3);
+    this.trailCount += 1;
+    const geo = this.trailLine.geometry;
+    geo.attributes.position.needsUpdate = true;
+    geo.setDrawRange(0, this.trailCount);
+  }
+
   /** ボールが何かに衝突したとき、効果音を鳴らし、飛行中ならバー・ポストへの接触を記録する */
   private onBallCollide = (event: {
     body: CANNON.Body | null;
     contact?: CANNON.ContactEquation;
   }): void => {
     if (!event.body) return;
+    // ゴースト中にすり抜けた壁は音も接触記録も出さない
+    if (this.ghostActive && this.wallBodies.has(event.body)) return;
     // 衝突の強さ（法線方向の相対速度）。効果音の音量・省略判定に使う
     const impact = Math.abs(event.contact?.getImpactVelocityAlongNormal() ?? 0);
     // ネット接触はフェーズに関係なく強く減衰させ、引っかかって進ませない
@@ -751,6 +815,9 @@ export class Game {
     this.state.mode = 'free';
     this.state.score = 0;
     this.state.attempts = 0;
+    this.state.streak = 0;
+    this.state.shotKmh = 0;
+    this.state.item = 'normal';
     this.state.stageCleared = false;
     this.state.allCleared = false;
     this.resetForNextShot();
@@ -805,7 +872,9 @@ export class Game {
     this.state.stageCleared = false;
     this.state.allCleared = false;
     this.state.power = 0;
+    this.state.item = 'normal';
     this.resetBall();
+    this.clearTrail();
     this.aimArrow.visible = false;
     this.setPhase('aiming');
   }
@@ -821,6 +890,8 @@ export class Game {
     this.state.stageAttempts = 0;
     this.state.stageCleared = false;
     this.state.allCleared = false;
+    this.state.stageItemUsed = false;
+    this.state.shotKmh = 0;
     // γ：累積ミッションと球数制限を初期化
     this.stageGoal = stage.goal ?? null;
     this.goalProgress = 0;
@@ -973,6 +1044,7 @@ export class Game {
     body.position.set(def.x, def.y, def.z);
     this.world.addBody(body);
     this.obstacleBodies.add(body);
+    if (!dynamic) this.wallBodies.add(body);
 
     if (def.track) {
       this.movingObstacles.push({
@@ -1129,6 +1201,7 @@ export class Game {
       this.world.removeBody(body);
     }
     this.obstacleBodies.clear();
+    this.wallBodies.clear();
     this.movingObstacles = [];
 
     if (this.targetMesh) {
@@ -1232,6 +1305,35 @@ export class Game {
     this.emitState();
   }
 
+  /** スキルボールを選ぶ（照準中のみ。クリア表示中は変更しない） */
+  setItem(id: ItemId): void {
+    if (this.state.mode === null || this.state.phase !== 'aiming' || this.state.stageCleared) return;
+    this.state.item = id;
+    this.applyItemLook();
+    this.emitState();
+  }
+
+  setMuted(muted: boolean): void {
+    this.sfx.setMuted(muted);
+  }
+
+  setTrail(enabled: boolean): void {
+    this.trailEnabled = enabled;
+    this.trailLine.visible = enabled;
+  }
+
+  /** 選択中の球質を見た目に反映（キャノン=赤熱、ゴースト=半透明、照準矢印と弾道の色） */
+  private applyItemLook(): void {
+    const id = this.state.item;
+    const mat = this.ballMesh.material as THREE.MeshStandardMaterial;
+    mat.emissive.setHex(id === 'cannon' ? 0xff4d00 : 0x000000);
+    mat.emissiveIntensity = id === 'cannon' ? 0.45 : 0;
+    mat.transparent = id === 'ghost';
+    mat.opacity = id === 'ghost' ? 0.45 : 1;
+    this.aimArrow.setColor(id === 'normal' ? 0xffdd00 : skillBall(id).trail);
+    (this.trailLine.material as THREE.LineBasicMaterial).color.setHex(skillBall(id).trail);
+  }
+
   /** 現在の照準から打ち出し方向の単位ベクトルを求める */
   private aimDirection(): THREE.Vector3 {
     const yaw = this.aimX * MAX_YAW;
@@ -1251,13 +1353,38 @@ export class Game {
 
   private shoot(): void {
     const dir = this.aimDirection();
-    const speed = MIN_SPEED + this.state.power * (MAX_SPEED - MIN_SPEED);
+    const ball = skillBall(this.state.item);
+    const speed = (MIN_SPEED + this.state.power * (MAX_SPEED - MIN_SPEED)) * ball.speed;
     this.ballBody.velocity.set(dir.x * speed, dir.y * speed, dir.z * speed);
-    // カーブ量を縦軸のサイドスピンに変換（+転がり用の回転も少し）
-    const spin = this.state.curve * MAX_CURVE_SPIN;
-    this.ballBody.angularVelocity.set(-dir.z * 8, spin, dir.x * 8);
+    // カーブ量を縦軸のサイドスピンに変換（+転がり用の回転も少し）。
+    // ゴール方向(-Z)へ飛ぶ球は ω_y<0 でマグヌス力が +X（右）を向くため、正のカーブ=右曲がりになるよう符号を反転する
+    const spin = -this.state.curve * MAX_CURVE_SPIN * ball.curve;
+    if (ball.id === 'knuckle') {
+      // 無回転：スピン由来の曲がりは無く、代わりに空気の乱れで不規則にブレる
+      this.ballBody.angularVelocity.set(0, 0, 0);
+      this.knucklePhase = this.knucklePhase.map(() => Math.random() * Math.PI * 2);
+    } else if (ball.id === 'drive') {
+      // 進行方向に直交する水平軸まわりのトップスピン。ω×v が下向きになる向きにとる
+      const len = Math.hypot(dir.x, dir.z) || 1;
+      this.ballBody.angularVelocity.set(
+        (dir.z / len) * DRIVE_TOPSPIN,
+        spin,
+        (-dir.x / len) * DRIVE_TOPSPIN,
+      );
+    } else {
+      this.ballBody.angularVelocity.set(-dir.z * 8, spin, dir.x * 8);
+    }
+    // ゴーストは固定の壁だけ当たり判定を切る（キック後〜次のリセットまで）
+    this.ghostActive = ball.id === 'ghost';
+    for (const wall of this.wallBodies) wall.collisionResponse = !this.ghostActive;
+    if (ball.id !== 'normal') this.state.stageItemUsed = true;
+    this.state.shotKmh = Math.round(speed * 3.6);
+    this.flightTime = 0;
+    this.physicsAccumulator = 0;
+    this.clearTrail();
+    this.pushTrailPoint();
 
-    this.sfx.kick(this.state.power);
+    this.sfx.kick(Math.min(1, this.state.power * ball.speed));
 
     this.prevBallZ = this.ballBody.position.z;
     this.prevPostX = this.ballBody.position.x;
@@ -1280,6 +1407,8 @@ export class Game {
     this.ballBody.quaternion.set(0, 0, 0, 1);
     this.ballMesh.position.set(0, BALL_RADIUS, 0);
     this.prevBallZ = 0;
+    this.ghostActive = false;
+    for (const wall of this.wallBodies) wall.collisionResponse = true;
   }
 
   /** ゴール面のターゲットゾーン内に (x, y) があるか */
@@ -1372,6 +1501,7 @@ export class Game {
     this.state.attempts += 1;
     const goal = inside;
     if (goal) this.state.score += 1;
+    this.state.streak = goal ? this.state.streak + 1 : 0;
     this.state.lastResult = goal ? 'goal' : 'miss';
     this.resultTimer = goal ? 2.0 : 1.5;
     this.setPhase('result');
@@ -1532,7 +1662,8 @@ export class Game {
 
   private animate = (): void => {
     this.animationId = requestAnimationFrame(this.animate);
-    const dt = Math.min(this.clock.getDelta(), 1 / 30);
+    // 低fpsでもゲーム内時間が遅くならないよう、上限を大きめにとって固定ステップで刻む
+    const dt = Math.min(this.clock.getDelta(), 0.1);
 
     // 動く障害物（キーパー）の更新
     for (const mo of this.movingObstacles) {
@@ -1547,42 +1678,11 @@ export class Game {
       }
     }
 
-    // 飛行中の空力：空気抵抗（二次抗力）とマグヌス力を対気速度（風を差し引いた速度）で
-    // 計算して加える。力は物理ステップ前に加える（cannon-es はステップ後に力をクリアする）。
-    if (this.state.phase === 'shooting') {
-      const v = this.ballBody.velocity;
-      const relX = v.x - this.windX;
-      const relY = v.y;
-      const relZ = v.z - this.windZ;
-      const relSpeed = Math.hypot(relX, relY, relZ);
-      if (relSpeed > 0.01) {
-        // 空気抵抗 F = -DRAG_K・|v_rel|・v_rel（風下へ流される効果もここから生まれる）
-        const fd = -DRAG_K * relSpeed;
-        // マグヌス力 F = MAGNUS_COEF・(ω × v_rel)
-        const w = this.ballBody.angularVelocity;
-        const mx = w.y * relZ - w.z * relY;
-        const my = w.z * relX - w.x * relZ;
-        const mz = w.x * relY - w.y * relX;
-        this.ballBody.applyForce(
-          new CANNON.Vec3(
-            fd * relX + MAGNUS_COEF * mx,
-            fd * relY + MAGNUS_COEF * my,
-            fd * relZ + MAGNUS_COEF * mz,
-          ),
-        );
-      }
-      // 芝の上を転がっている間は転がり抵抗で自然に減速させる
-      if (this.ballBody.position.y < BALL_RADIUS + 0.02) {
-        const rollSpeed = Math.hypot(v.x, v.z);
-        if (rollSpeed > 0.1) {
-          const fr = (ROLL_RESIST * BALL_MASS * 9.82) / rollSpeed;
-          this.ballBody.applyForce(new CANNON.Vec3(-fr * v.x, 0, -fr * v.z));
-        }
-      }
+    // 物理（固定サブステップ。毎ステップ空力を加え、ゴール面通過もステップごとに判定）
+    this.simulate(dt);
+    if (this.state.phase !== 'aiming' && this.trailEnabled && this.ballBody.position.z > GOAL_Z - 2) {
+      this.pushTrailPoint();
     }
-
-    // 物理ステップ
-    this.world.step(1 / 60, dt, 3);
 
     // メッシュへ反映
     this.ballMesh.position.copy(this.ballBody.position as unknown as THREE.Vector3);
@@ -1601,8 +1701,6 @@ export class Game {
     this.camera.lookAt(this.camLook);
 
     if (this.state.phase === 'shooting') {
-      this.checkPostHits();
-      this.checkGoalCrossing();
       // 枠を大きく外れた／止まった／飛び続けた場合のショット終了判定
       this.shotTimer += dt;
       const v = this.ballBody.velocity.length();
@@ -1682,12 +1780,69 @@ export class Game {
     this.renderer.render(this.scene, this.camera);
   };
 
+  /** 実時間 dt ぶんの物理を固定サブステップで進める */
+  private simulate(dt: number): void {
+    this.physicsAccumulator += dt;
+    while (this.physicsAccumulator >= PHYS_STEP) {
+      this.physicsAccumulator -= PHYS_STEP;
+      if (this.state.phase === 'shooting') this.applyBallForces();
+      this.world.step(PHYS_STEP);
+      if (this.state.phase === 'shooting') {
+        this.flightTime += PHYS_STEP;
+        this.checkPostHits();
+        this.checkGoalCrossing();
+      }
+    }
+  }
+
+  /**
+   * 飛行中の空力：空気抵抗（二次抗力）とマグヌス力を対気速度（風を差し引いた速度）で計算し、
+   * ナックルなら不規則な揺れを加える。cannon-es はステップ後に力をクリアするので毎ステップ加える。
+   */
+  private applyBallForces(): void {
+    const ball = skillBall(this.state.item);
+    const v = this.ballBody.velocity;
+    const relX = v.x - this.windX;
+    const relY = v.y;
+    const relZ = v.z - this.windZ;
+    const relSpeed = Math.hypot(relX, relY, relZ);
+    const f = this.aeroForce.set(0, 0, 0);
+    if (relSpeed > 0.01) {
+      const fd = -DRAG_K * ball.drag * relSpeed;
+      const w = this.ballBody.angularVelocity;
+      f.x = fd * relX + MAGNUS_COEF * (w.y * relZ - w.z * relY);
+      f.y = fd * relY + MAGNUS_COEF * (w.z * relX - w.x * relZ);
+      f.z = fd * relZ + MAGNUS_COEF * (w.x * relY - w.y * relX);
+    }
+    // ナックル：2つの周波数を重ねた揺れ。空中で速いあいだだけ効き、失速・接地で消える
+    if (ball.id === 'knuckle' && this.ballBody.position.y > BALL_RADIUS + 0.05) {
+      const t = this.flightTime;
+      const p = this.knucklePhase;
+      const fade = Math.min(1, relSpeed / 18);
+      const ax = KNUCKLE_ACC_X * (0.6 * Math.sin(7.2 * t + p[0]) + 0.4 * Math.sin(12.5 * t + p[1]));
+      const ay = KNUCKLE_ACC_Y * (0.6 * Math.sin(8.4 * t + p[2]) + 0.4 * Math.sin(14.1 * t + p[3]));
+      f.x += BALL_MASS * ax * fade;
+      f.y += BALL_MASS * ay * fade;
+    }
+    // 芝の上を転がっている間は転がり抵抗で自然に減速させる
+    if (this.ballBody.position.y < BALL_RADIUS + 0.02) {
+      const rollSpeed = Math.hypot(v.x, v.z);
+      if (rollSpeed > 0.1) {
+        const fr = (ROLL_RESIST * BALL_MASS * 9.82) / rollSpeed;
+        f.x -= fr * v.x;
+        f.z -= fr * v.z;
+      }
+    }
+    this.ballBody.applyForce(f);
+  }
+
   private resetForNextShot(): void {
     this.resetBall();
     this.state.power = 0;
     // カーブはスライダーの設定値を次のキックにも引き継ぐ
     this.state.lastResult = null;
     this.aimArrow.visible = true;
+    this.applyItemLook();
     this.updateAimArrow();
     this.setPhase('aiming');
   }

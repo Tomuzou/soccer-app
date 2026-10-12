@@ -8,9 +8,17 @@ export class Sfx {
   private master: GainNode | null = null;
   /** 効果音ごとの最終再生時刻（スロットリング用） */
   private lastPlay = new Map<string, number>();
+  /** ミュート中は AudioContext を作らず全ての再生を省く */
+  private muted = false;
+
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    if (this.master) this.master.gain.value = muted ? 0 : 0.5;
+  }
 
   /** AudioContext を必要になった時点で生成・再開する */
   private ensure(): AudioContext | null {
+    if (this.muted) return null;
     if (!this.ctx) {
       const Ctor = window.AudioContext;
       if (!Ctor) return null;
