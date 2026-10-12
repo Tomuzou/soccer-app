@@ -41,6 +41,7 @@ PCのショートカット：`←` / `→`でカーブ、`R`で蹴り直し、`E
 | バージョン | 内容 | プレイ |
 |---|---|---|
 | ver.g.1 | CodexによるUIと機能の改良版 | [遊ぶ](https://tomuzou.github.io/soccer-app/ver.g.1/) |
+| ver.c.4 | Claude Code版の改良版。球質を変えるスキルボール（ナックル／ドライブ／キャノン／ゴースト）、ステージ選択、👑記録、球速表示（ブランチ `claude-c4`） | [遊ぶ](https://tomuzou.github.io/soccer-app/ver.c.4/) |
 | ver.c.3 | 改良前のClaude Code版。リアル物理、風、効果音を含む（5d2df35） | [遊ぶ](https://tomuzou.github.io/soccer-app/ver.c.3/) |
 | ver.c.2 | 旧v2。球数制限までを含む凍結版 | [遊ぶ](https://tomuzou.github.io/soccer-app/ver.c.2/) |
 | ver.c.1 | 旧v1。初期のフリーキックゲーム | [遊ぶ](https://tomuzou.github.io/soccer-app/ver.c.1/) |
@@ -51,7 +52,7 @@ PCのショートカット：`←` / `→`でカーブ、`R`で蹴り直し、`E
 
 ### ローカルで専用ウィンドウを開く（Windows）
 
-`Play-Local.cmd` をダブルクリックするか、`npm run play:desktop` を実行します。毎回起動時に現行ソースを本番ビルドし、タブ・アドレスバーのないChrome（未インストールの場合はEdge）の専用ウィンドウで開きます。開発サーバーの自動更新処理は動きません。起動にはNode.jsと`npm ci`で導入した依存パッケージが必要です。
+`Play-Local.cmd` をダブルクリックするか、`npm run play:desktop` を実行します。ver.c.4を直接開く場合は `Play-Local-c4.cmd` を使います。毎回起動時に現行ソースを本番ビルドし、タブ・アドレスバーのないChrome（未インストールの場合はEdge）の専用ウィンドウで開きます。開発サーバーの自動更新処理は動きません。起動にはNode.jsと`npm ci`で導入した依存パッケージが必要です。
 
 内部ではブラウザの描画エンジンと、このPC内だけで待ち受けるローカルサーバー（127.0.0.1:4180）を使用します。独立したexeへの変換ではなく、描画の速さはGPUや画面サイズによって変わります。ウィンドウを閉じるとサーバーも終了します。記録は通常のブラウザとは別の`.desktop/profile`に保存されます。起動に失敗した場合のログは`.desktop/launcher-error.log`です。
 
@@ -73,7 +74,7 @@ npm run verify:archives
 
 `master`へのpushでGitHub Actionsがテスト・本番ビルド・バージョンリンク検証を行い、GitHub Pagesに公開します。本番のbaseは`/soccer-app/`です。
 
-Claude版の`public/ver.c.*`は凍結済み成果物です。再生成・上書きしないでください。ユーザーの指定でCodex版はver.g.1のまま改良を続け、`public/ver.g.1/`を更新します。
+Claude版の`public/ver.c.*`は凍結済み成果物です。再生成・上書きしないでください。ver.c.4のソースは`claude-c4`ブランチにあり、そこで`--base=/soccer-app/ver.c.4/`でビルドした`index.html`と`assets/`だけを`public/ver.c.4/`に置いています。ユーザーの指定でCodex版はver.g.1のまま改良を続け、`public/ver.g.1/`を更新します。
 
 ver.g.1の初回スナップショット作成手順：
 

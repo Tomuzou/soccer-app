@@ -13,6 +13,7 @@ test("published versions all load their 3D game and can return to latest", async
     "ver.c.1",
     "ver.c.2",
     "ver.c.3",
+    "ver.c.4",
     "ver.g.1",
     "v1",
     "v2",
@@ -27,10 +28,13 @@ test("published versions all load their 3D game and can return to latest", async
       await page.getByRole("link", { name: "ver.c.3 ↗" }).click();
       await expect(page).toHaveURL(/\/soccer-app\/ver.c.3\/$/);
     }
-    await expect(
-      page.getByRole("link", { name: /Codex最新版へ/ }),
-    ).toBeVisible();
-    await page.getByRole("link", { name: /Codex最新版へ/ }).click();
+    // ver.c.4 は自前のタイトル画面にバージョンコレクションを持つ（バナーは付けない）
+    const back =
+      version === "ver.c.4"
+        ? page.getByRole("link", { name: /最新版 ver\.g\.1/ })
+        : page.getByRole("link", { name: /Codex最新版へ/ });
+    await expect(back).toBeVisible();
+    await back.click();
     await expect(
       page.getByRole("heading", { name: /一球に、\s*夢中になれ。/ }),
     ).toBeVisible();

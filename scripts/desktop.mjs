@@ -8,6 +8,10 @@ const project = fileURLToPath(new URL("../", import.meta.url));
 const runtime = path.join(project, ".desktop");
 const origin = "http://127.0.0.1:4180";
 const health = `${origin}/__free_kick_lab_desktop__`;
+// --page=ver.c.4/ のように公開パス以下のページを指定できる（省略時は最新版）
+const page = (process.argv.find((arg) => arg.startsWith("--page="))?.slice(7) ?? "")
+  .replace(/^\/+/, "");
+if (!/^[\w.\-/]*$/.test(page)) throw new Error(`Invalid page: ${page}`);
 fs.mkdirSync(runtime, { recursive: true });
 
 function reportError(error) {
@@ -81,7 +85,7 @@ async function main() {
   // A separate persistent profile keeps extensions and normal browser tabs out
   // of this window; use the browser's normal GPU acceleration settings.
   const child = spawn(browser, [
-    `--app=${origin}/soccer-app/`,
+    `--app=${origin}/soccer-app/${page}`,
     `--user-data-dir=${path.join(runtime, "profile")}`,
     "--window-size=1280,850",
     "--no-first-run",

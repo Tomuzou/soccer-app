@@ -61,7 +61,7 @@ if (process.argv.includes("--snapshot-g1")) {
       path.join("dist/assets", name),
       path.join("public/ver.g.1/assets", name),
     );
-  for (const n of [1, 2, 3]) {
+  for (const n of [1, 2, 3, 4]) {
     fs.mkdirSync(`public/ver.g.1/ver.c.${n}`, { recursive: true });
     fs.writeFileSync(
       `public/ver.g.1/ver.c.${n}/index.html`,

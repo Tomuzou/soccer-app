@@ -1,3 +1,4 @@
+param([string]$Page = '')
 $ErrorActionPreference = 'Stop'
 $taskProject = Split-Path -Parent $PSScriptRoot
 $taskRuntime = Join-Path $taskProject '.desktop'
@@ -5,7 +6,7 @@ try {
     New-Item -ItemType Directory -Path $taskRuntime -Force | Out-Null
     $taskNode = (Get-Command node -ErrorAction Stop).Source
     $taskScript = Join-Path $PSScriptRoot 'desktop.mjs'
-    $taskProcess = Start-Process -FilePath $taskNode -ArgumentList @(('"' + $taskScript + '"')) -WorkingDirectory $taskProject -WindowStyle Hidden -PassThru
+    $taskProcess = Start-Process -FilePath $taskNode -ArgumentList @(('"' + $taskScript + '"'), ('--page=' + $Page)) -WorkingDirectory $taskProject -WindowStyle Hidden -PassThru
     $taskDeadline = (Get-Date).AddSeconds(90)
     do {
         try {

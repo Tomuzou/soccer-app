@@ -9,6 +9,7 @@ const required = [
   "ver.c.1/index.html",
   "ver.c.2/index.html",
   "ver.c.3/index.html",
+  "ver.c.4/index.html",
   "ver.g.1/index.html",
 ];
 for (const relative of required) {
@@ -32,6 +33,7 @@ for (const relative of [
   "ver.g.1/ver.c.1",
   "ver.g.1/ver.c.2",
   "ver.g.1/ver.c.3",
+  "ver.g.1/ver.c.4",
 ]) {
   const html = fs.readFileSync(
     path.join("dist", relative, "index.html"),

@@ -287,7 +287,7 @@ export default function App() {
                 <div className="archive">
                   <span>THE COLLECTION / CLAUDE CODE</span>
                   <div>
-                    {[1, 2, 3].map((n) => (
+                    {[1, 2, 3, 4].map((n) => (
                       <a
                         key={n}
                         href={`${import.meta.env.BASE_URL}ver.c.${n}/`}

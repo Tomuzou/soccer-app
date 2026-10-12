@@ -8,7 +8,7 @@
 
 - 現行UIは濃紺・ミント色のロビー、40ステージ選択、HUD、ドラッグ／精密照準、操作ガイド、10球ラッシュ、アイテム。
 - ユーザー指定により、ver.g.1 は版番号を上げずに継続改良する（`/soccer-app/` と `/soccer-app/ver.g.1/` の両方を ver.g.1 として更新）。
-- Claude Code 版（ver.c.1〜3）は凍結済みアーカイブ。詳細は「デプロイ／バージョンアーカイブ」。
+- Claude Code 版（ver.c.1〜4）は凍結済みアーカイブ。詳細は「デプロイ／バージョンアーカイブ」。
 
 ## 技術スタック
 
@@ -51,7 +51,7 @@ npm run build            # 本番ビルド（tsc 型チェック → vite build�
 npm test                 # 保存データ検証のユニットテスト
 npm run test:browser     # Playwright（ローカルはインストール済み Chrome、dev サーバーを自動起動）
 npm run verify:archives  # build 後に全版のアセット・リンクを検証
-npm run play:desktop     # 本番ビルドして 127.0.0.1:4180 で専用ウィンドウ起動（Play-Local.cmd と同じ）
+npm run play:desktop     # 本番ビルドして 127.0.0.1:4180 で専用ウィンドウ起動（Play-Local.cmd と同じ。--page=ver.c.4/ で開くページ指定、Play-Local-c4.cmd が ver.c.4 用）
 ```
 
 - lint スクリプトは未導入（`npm run build` の tsc が型チェックを兼ねる）
@@ -131,6 +131,7 @@ npm run play:desktop     # 本番ビルドして 127.0.0.1:4180 で専用ウィ�
 |---|---|---|
 | `/` | 現行 ver.g.1（ソースからビルド） | 改良を続ける |
 | `ver.g.1/` | 現行と同じ ver.g.1 のスナップショット | 改良のたびに更新 |
+| `ver.c.4/` | Claude 版の改良版。ソースは `claude-c4` ブランチ（ver.c.3 から分岐） | 凍結。更新はブランチ側でビルドしてコピー |
 | `ver.c.3/` | 改良前の Claude 版 HEAD（5d2df35） | **凍結・上書き禁止** |
 | `ver.c.2/` ・ `v2/` | 旧v2（74785ea、球数制限まで） | 凍結。ver.c.2 の HTML は v2 のアセットを参照 |
 | `ver.c.1/` ・ `v1/` | 旧v1（2cd2cbe、初期版） | 凍結。ver.c.1 の HTML は v1 のアセットを参照 |
@@ -142,6 +143,7 @@ npm run play:desktop     # 本番ビルドして 127.0.0.1:4180 で専用ウィ�
   npm run build
   npm run verify:archives
   ```
-- **相互リンク**：現行版は `App.tsx` のロビーから `BASE_URL + 'ver.c.N/'` へ。各旧版は `scripts/archives.mjs` が HTML に埋め込むバナーで `/soccer-app/` へ戻る
-- **入れ子リンクのリダイレクト**：凍結バンドル内に残る相対リンク（例：ver.c.3 内の `BASE_URL + 'v1/'` → `/soccer-app/ver.c.3/v1/`）は、`<meta http-equiv="refresh">` のスタブでトップレベルへ転送する（`ver.c.3/v1`・`ver.c.3/v2`・`v2/v1`・`ver.g.1/ver.c.1〜3`）。`verify-archives.mjs` は `v2/v1` 以外を検証する
+- **相互リンク**：現行版は `App.tsx` のロビーから `BASE_URL + 'ver.c.N/'`（N=1〜4）へ。ver.c.1〜3 は `scripts/archives.mjs` が HTML に埋め込むバナーで `/soccer-app/` へ戻る。ver.c.4 はバナーを付けず、自前のタイトル画面のコレクション（公開ルート基準の絶対リンク）で各版へ移動する
+- **ver.c.4 の更新**：`claude-c4` ブランチ（worktree 推奨）で `MSYS_NO_PATHCONV=1 npm run build -- --base=/soccer-app/ver.c.4/` → `dist/index.html` と `dist/assets/` だけを master の `public/ver.c.4/` へ置き換えコピー（`dist/v1` `dist/v2` はコピーしない）
+- **入れ子リンクのリダイレクト**：凍結バンドル内に残る相対リンク（例：ver.c.3 内の `BASE_URL + 'v1/'` → `/soccer-app/ver.c.3/v1/`）は、`<meta http-equiv="refresh">` のスタブでトップレベルへ転送する（`ver.c.3/v1`・`ver.c.3/v2`・`v2/v1`・`ver.g.1/ver.c.1〜4`）。`verify-archives.mjs` は `v2/v1` 以外を検証する
 - 新しい版を凍結する場合は新規ディレクトリを追加し、既存の凍結版は維持する
