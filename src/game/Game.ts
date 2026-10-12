@@ -1977,8 +1977,7 @@ export class Game {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     this.camera.aspect = w / h;
-    // Reserve space for the shot controls so the ball stays visible in portrait.
-    this.camera.setViewOffset(w, h, 0, h * (w / h < 0.9 ? 0.14 : 0.04), w, h);
+    // The canvas occupies the pitch area above/beside the controls.
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
   }

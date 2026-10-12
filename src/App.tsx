@@ -200,7 +200,7 @@ export default function App() {
   const streak = history.reduce((count, goal) => (goal ? count + 1 : 0), 0);
 
   return (
-    <div className="app">
+    <div className={`app${playing && !rushDone && !state.stageCleared ? " playing" : ""}`}>
       <div ref={container} className="canvas-container" />
       {!playing ? (
         <main className="lobby">

@@ -41,3 +41,6 @@ Thumbs.db
 # Automated browser checks
 test-results/
 playwright-report/
+
+# Local desktop window profile and launcher logs
+.desktop/
