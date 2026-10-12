@@ -15,6 +15,15 @@ import type {
 import { STAGES_A, STAGES_B, STAGES_C, STAGES_D } from './stages';
 import { Sfx } from './sfx';
 import { skillBall } from './items';
+import {
+  PLAYER_BASE_H,
+  addStadium,
+  makeBallTextures,
+  makeGrassTexture,
+  makeNetTexture,
+  makePlayerMesh,
+  makeSky,
+} from './scenery';
 
 // --- ゲーム定数（単位はメートル） ---
 const GOAL_WIDTH = 7.32; // 実寸のゴール幅
@@ -25,6 +34,10 @@ const BALL_RADIUS = 0.15;
 const POST_COLOR = 0xffffff; // 通常のポスト色
 const POST_HIGHLIGHT = 0xff5a3c; // ミッション対象ポストの強調色（オレンジ赤）
 const BALL_MASS = 0.43; // FIFA規定球の質量（kg）
+/** 太陽の方向（影・空の太陽のにじみに使う） */
+const SUN_DIR = new THREE.Vector3(-0.45, 0.8, 0.35).normalize();
+/** 地平線付近の空の色（フォグと揃える） */
+const HORIZON_COLOR = 0xc9dcec;
 
 const MIN_SPEED = 16; // パワー0のときの初速
 const MAX_SPEED = 30; // パワー1のときの初速
@@ -247,12 +260,15 @@ export class Game {
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
     container.appendChild(this.renderer.domElement);
 
     // --- シーン・カメラ ---
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x87ceeb);
-    this.scene.fog = new THREE.Fog(0x87ceeb, 30, 60);
+    this.scene.background = new THREE.Color(HORIZON_COLOR);
+    this.scene.fog = new THREE.Fog(HORIZON_COLOR, 60, 160);
+    this.scene.add(makeSky(SUN_DIR, HORIZON_COLOR));
 
     this.camera = new THREE.PerspectiveCamera(
       55,
@@ -290,30 +306,34 @@ export class Game {
   // ---------------------------------------------------------------------------
 
   private setupLights(): void {
-    const ambient = new THREE.AmbientLight(0xffffff, 0.7);
-    this.scene.add(ambient);
+    // 空（青）と芝（緑）の照り返しを含む環境光＋太陽光
+    this.scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x4a6b33, 1.1));
 
-    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
-    sun.position.set(-8, 15, 6);
+    const sun = new THREE.DirectionalLight(0xfff3e0, 2.6);
+    sun.position.copy(SUN_DIR).multiplyScalar(40).add(new THREE.Vector3(0, 0, -8));
+    sun.target.position.set(0, 0, -8);
+    this.scene.add(sun.target);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -20;
-    sun.shadow.camera.right = 20;
-    sun.shadow.camera.top = 20;
-    sun.shadow.camera.bottom = -20;
-    sun.shadow.camera.far = 60;
+    // プレー範囲（ボール〜ゴール裏）に絞って影を細かくする
+    sun.shadow.camera.left = -16;
+    sun.shadow.camera.right = 16;
+    sun.shadow.camera.top = 16;
+    sun.shadow.camera.bottom = -16;
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 90;
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.02;
     this.scene.add(sun);
   }
 
   private setupGround(): void {
     // 刈り込みストライプの入った芝生
-    const tex = this.makeGrassTexture();
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(1, 8); // 80m を 8タイル ＝ 5m 幅のストライプ
-    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    const tex = makeGrassTexture(this.renderer.capabilities.getMaxAnisotropy());
+    // 1タイル=10m四方（5m幅のストライプ2本）。縦横とも敷き詰めて芝目の縮尺を揃える
+    tex.repeat.set(6, 8);
     const geo = new THREE.PlaneGeometry(60, 80);
-    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1 });
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = -Math.PI / 2;
     mesh.receiveShadow = true;
@@ -337,28 +357,6 @@ export class Game {
         friction: 0.4,
       }),
     );
-  }
-
-  /** 濃淡2色の刈り込みストライプ＋粒状ノイズの芝テクスチャを生成する */
-  private makeGrassTexture(): THREE.CanvasTexture {
-    const size = 256;
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = size;
-    const ctx = canvas.getContext('2d')!;
-    // 上半分＝明るい芝、下半分＝暗い芝（1タイルでストライプ1対）
-    ctx.fillStyle = '#3f9b3f';
-    ctx.fillRect(0, 0, size, size / 2);
-    ctx.fillStyle = '#368736';
-    ctx.fillRect(0, size / 2, size, size / 2);
-    // 芝の粒感（ランダムな明暗の点を散らす）
-    for (let i = 0; i < 1600; i++) {
-      const x = Math.random() * size;
-      const y = Math.random() * size;
-      const light = Math.random() > 0.5;
-      ctx.fillStyle = light ? 'rgba(255,255,255,0.05)' : 'rgba(0,40,0,0.07)';
-      ctx.fillRect(x, y, 2, 2);
-    }
-    return new THREE.CanvasTexture(canvas);
   }
 
   /** ピッチの白線（ゴールライン・ペナルティエリア・ゴールエリア・PKスポット・アーク）を実寸で描く */
@@ -410,30 +408,13 @@ export class Game {
     this.scene.add(arc);
   }
 
-  /** スタジアムの雰囲気づくり（ゴール裏の広告ボードと遠景のスタンド） */
+  /** スタジアム（観客席・広告ボード・照明塔） */
   private addSurroundings(): void {
-    const boardColors = [0x1f6feb, 0xe11d48, 0xf5f5f5, 0x0ea55e, 0xf5a623, 0x1f6feb];
-    boardColors.forEach((color, i) => {
-      const board = new THREE.Mesh(
-        new THREE.BoxGeometry(5.9, 0.9, 0.15),
-        new THREE.MeshStandardMaterial({ color }),
-      );
-      board.position.set(-15 + i * 6, 0.45, GOAL_Z - 3.4);
-      board.castShadow = true;
-      this.scene.add(board);
-    });
-
-    // 遠景のメインスタンド（フォグに霞ませて奥行きを出す）
-    const stand = new THREE.Mesh(
-      new THREE.BoxGeometry(56, 8, 6),
-      new THREE.MeshStandardMaterial({ color: 0x5b6272 }),
-    );
-    stand.position.set(0, 4, GOAL_Z - 14);
-    this.scene.add(stand);
+    addStadium(this.scene, GOAL_Z);
   }
 
   private setupGoal(): void {
-    const postMat = new THREE.MeshStandardMaterial({ color: POST_COLOR });
+    const postMat = new THREE.MeshStandardMaterial({ color: POST_COLOR, roughness: 0.28, metalness: 0.25 });
     const halfW = GOAL_WIDTH / 2;
 
     // 各ポストは色を個別に変えられるよう専用マテリアルを持たせる
@@ -445,7 +426,7 @@ export class Game {
       );
       const mesh = new THREE.Mesh(
         geo,
-        new THREE.MeshStandardMaterial({ color: POST_COLOR }),
+        new THREE.MeshStandardMaterial({ color: POST_COLOR, roughness: 0.28, metalness: 0.25 }),
       );
       mesh.position.set(x, GOAL_HEIGHT / 2, GOAL_Z);
       mesh.castShadow = true;
@@ -530,7 +511,7 @@ export class Game {
       const len = dir.length();
       const tube = new THREE.Mesh(
         new THREE.CylinderGeometry(r, r, len, 8),
-        new THREE.MeshStandardMaterial({ color: POST_COLOR }),
+        new THREE.MeshStandardMaterial({ color: POST_COLOR, roughness: 0.28, metalness: 0.25 }),
       );
       tube.position.copy(from).addScaledVector(dir, 0.5);
       tube.quaternion.setFromUnitVectors(
@@ -613,31 +594,9 @@ export class Game {
     this.netBodies.add(body);
   }
 
-  /** ネット用のグリッド模様テクスチャを生成する */
+  /** ネット用の網目テクスチャ（細かい目） */
   private makeNetTexture(): THREE.Texture {
-    const size = 128;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d')!;
-    ctx.clearRect(0, 0, size, size);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.lineWidth = 7;
-    const step = size / 4;
-    for (let i = 0; i <= 4; i++) {
-      ctx.beginPath();
-      ctx.moveTo(i * step, 0);
-      ctx.lineTo(i * step, size);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(0, i * step);
-      ctx.lineTo(size, i * step);
-      ctx.stroke();
-    }
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.wrapT = THREE.RepeatWrapping;
-    return tex;
+    return makeNetTexture(this.renderer.capabilities.getMaxAnisotropy());
   }
 
   /** 指定サイズのネットパネル（グリッド模様の半透明面）を作る */
@@ -646,10 +605,10 @@ export class Game {
     h: number,
     segW = 1,
     segH = 1,
-    opacity = 0.45,
+    opacity = 0.75,
   ): THREE.Mesh {
     const tex = this.makeNetTexture();
-    const cell = 0.6; // ネットの目の大きさ（m）
+    const cell = 0.14; // ネットの目の大きさ（m）
     tex.repeat.set(
       Math.max(1, Math.round(w / cell)),
       Math.max(1, Math.round(h / cell)),
@@ -669,10 +628,17 @@ export class Game {
   }
 
   private setupBall(): void {
-    const geo = new THREE.SphereGeometry(BALL_RADIUS, 32, 32);
-    const mat = new THREE.MeshStandardMaterial({
-      map: this.makeBallTexture(),
-      roughness: 0.4,
+    const geo = new THREE.SphereGeometry(BALL_RADIUS, 48, 32);
+    const { map, bump } = makeBallTextures();
+    map.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    // 合成皮革のツヤ（クリアコート）と縫い目の凹み
+    const mat = new THREE.MeshPhysicalMaterial({
+      map,
+      bumpMap: bump,
+      bumpScale: 1.2,
+      roughness: 0.5,
+      clearcoat: 0.45,
+      clearcoatRoughness: 0.35,
     });
     this.ballMesh = new THREE.Mesh(geo, mat);
     this.ballMesh.castShadow = true;
@@ -689,47 +655,6 @@ export class Game {
     this.world.addBody(this.ballBody);
 
     this.resetBall();
-  }
-
-  /** 白地に黒の五角形パネルを並べた、伝統的なサッカーボール模様のテクスチャを生成する */
-  private makeBallTexture(): THREE.CanvasTexture {
-    const size = 256;
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = size;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#fafafa';
-    ctx.fillRect(0, 0, size, size);
-
-    const drawPentagon = (cx: number, cy: number, r: number, rot: number): void => {
-      ctx.beginPath();
-      for (let i = 0; i < 5; i++) {
-        const ang = rot + (i * 2 * Math.PI) / 5 - Math.PI / 2;
-        const px = cx + Math.cos(ang) * r;
-        const py = cy + Math.sin(ang) * r;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      }
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-    };
-
-    ctx.fillStyle = '#161616';
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; // パネルの縫い目風の縁取り
-    ctx.lineWidth = 4;
-    // 千鳥配置で並べる（テクスチャは球にラップされるので端で切れても目立たない）
-    const cells: [number, number, number][] = [
-      [32, 36, 0.2],
-      [160, 32, 0.9],
-      [96, 128, 0.5],
-      [224, 124, 1.4],
-      [32, 220, 1.0],
-      [160, 224, 0.3],
-    ];
-    for (const [x, y, rot] of cells) {
-      drawPentagon(x, y, 27, rot);
-    }
-    return new THREE.CanvasTexture(canvas);
   }
 
   private setupAimArrow(): void {
@@ -1018,9 +943,9 @@ export class Game {
   private addObstacle(def: ObstacleDef): void {
     const dynamic = !!(def.move || def.track);
 
-    // 見た目：AIキーパーは人型、それ以外（壁・往復キーパー）は直方体
+    // 見た目：キーパー（AI・往復）は構えた人型、壁は選手の列。当たり判定は下の箱のまま
     let mesh: THREE.Object3D;
-    if (def.track) {
+    if (dynamic) {
       const keeper = this.makeKeeperMesh();
       // 基準サイズで組んだ人型を def のサイズに合わせて拡縮
       keeper.scale.set(
@@ -1030,11 +955,7 @@ export class Game {
       );
       mesh = keeper;
     } else {
-      const geo = new THREE.BoxGeometry(def.w, def.h, def.d);
-      const color = def.move ? 0x1f6feb : 0x8b4513; // 往復キーパー=青 / 壁=茶
-      const box = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color }));
-      box.castShadow = true;
-      mesh = box;
+      mesh = this.makeWallMesh(def.w, def.h);
     }
     mesh.position.set(def.x, def.y, def.z);
     this.scene.add(mesh);
@@ -1081,46 +1002,34 @@ export class Game {
   }
 
   /**
-   * AIキーパーの人型メッシュ（Group）を基準サイズで作る。
+   * キーパーの人型メッシュ（Group）を基準サイズで作る。
    * 原点はボディ中心。腕を広げた幅が基準幅に収まるよう組み、
    * 実サイズへの拡縮は呼び出し側が group.scale で行う。
    */
   private makeKeeperMesh(): THREE.Group {
-    const group = new THREE.Group();
-    const jersey = new THREE.MeshStandardMaterial({ color: 0xe11d48 }); // ユニフォーム
-    const skin = new THREE.MeshStandardMaterial({ color: 0xf2c79b }); // 肌
-    const gloves = new THREE.MeshStandardMaterial({ color: 0xfacc15 }); // グローブ
+    const group = makePlayerMesh({ jersey: 0xf2c94c, shorts: 0x1f2937, socks: 0xf2c94c }, true);
+    group.scale.y = KEEPER_BASE_H / PLAYER_BASE_H;
+    // scale は呼び出し側で上書きされるので、高さ合わせは内側のグループで行う
+    const outer = new THREE.Group();
+    outer.add(group);
+    return outer;
+  }
 
-    const halfH = KEEPER_BASE_H / 2;
-    const add = (mesh: THREE.Mesh, x: number, y: number, z = 0): void => {
-      mesh.position.set(x, y, z);
-      mesh.castShadow = true;
-      group.add(mesh);
-    };
-
-    // 頭
-    add(new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 16), skin), 0, halfH - 0.17);
-    // 胴体
-    add(
-      new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.66, 0.26), jersey),
-      0,
-      halfH - 0.67,
-    );
-    // 脚（2本）
-    const legGeo = new THREE.BoxGeometry(0.18, 0.7, 0.2);
-    add(new THREE.Mesh(legGeo, jersey), -0.12, -halfH + 0.35);
-    add(new THREE.Mesh(legGeo.clone(), jersey), 0.12, -halfH + 0.35);
-    // 腕（左右に水平に広げて構える。手は腕の先端に合わせる）
-    const armY = halfH - 0.5;
-    const armGeo = new THREE.BoxGeometry(0.5, 0.15, 0.15);
-    add(new THREE.Mesh(armGeo, jersey), -0.48, armY);
-    add(new THREE.Mesh(armGeo.clone(), jersey), 0.48, armY);
-    // 手（グローブ）：腕の先端と同じ高さに置く
-    const handGeo = new THREE.SphereGeometry(0.11, 12, 12);
-    add(new THREE.Mesh(handGeo, gloves), -0.76, armY);
-    add(new THREE.Mesh(handGeo.clone(), gloves), 0.76, armY);
-
-    return group;
+  /** 壁（人垣）：幅に応じた人数の選手を横一列に並べる。原点は箱の中心 */
+  private makeWallMesh(w: number, h: number): THREE.Group {
+    const wall = new THREE.Group();
+    const count = Math.max(1, Math.round(w / 0.6));
+    const spacing = w / count;
+    for (let i = 0; i < count; i++) {
+      const player = makePlayerMesh({ jersey: 0xf5f5f5, shorts: 0x1e3a8a, socks: 0x1e3a8a }, false);
+      player.scale.set(1, h / PLAYER_BASE_H, 1);
+      player.position.x = -w / 2 + spacing * (i + 0.5);
+      // わずかに前後・向きをばらつかせて人垣らしく
+      player.position.z = (Math.random() - 0.5) * 0.08;
+      player.rotation.y = (Math.random() - 0.5) * 0.15;
+      wall.add(player);
+    }
+    return wall;
   }
 
   /**
@@ -1730,7 +1639,7 @@ export class Game {
       const intensity = Math.sin(k * Math.PI); // 中盤でピーク
       for (const mat of this.netMaterials) {
         mat.color.setRGB(1 - intensity * 0.8, 1, 1 - intensity * 0.6);
-        const base = (mat.userData.baseOpacity as number) ?? 0.45;
+        const base = (mat.userData.baseOpacity as number) ?? 0.75;
         mat.opacity = base + intensity * (1 - base) * 0.9;
       }
 
@@ -1763,7 +1672,7 @@ export class Game {
       if (this.netFlashTimer === 0) {
         for (const mat of this.netMaterials) {
           mat.color.setRGB(1, 1, 1);
-          mat.opacity = (mat.userData.baseOpacity as number) ?? 0.45;
+          mat.opacity = (mat.userData.baseOpacity as number) ?? 0.75;
         }
         (pos.array as Float32Array).set(this.netBackBasePos);
         pos.needsUpdate = true;
