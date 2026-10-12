@@ -7,6 +7,7 @@ import type { ItemId } from '../types';
  * - drive:   強いトップスピンで急降下する（高く蹴ってもバー下に落ちる）
  * - cannon:  剛速球。代わりにカーブがかかりにくい
  * - ghost:   固定の壁だけをすり抜ける（キーパーには止められる）
+ * - boomerang: 超強烈なサイドスピン。序盤はゆるく、後半に一気に曲がる
  */
 export interface SkillBall {
   id: ItemId;
@@ -29,6 +30,7 @@ export const SKILL_BALLS: readonly SkillBall[] = [
   { id: 'knuckle', icon: '🌀', name: 'ナックル', hint: '無回転でブレる。軌道は運まかせ', speed: 1.08, curve: 0, drag: 1, trail: 0xc4b5fd },
   { id: 'drive', icon: '⤵️', name: 'ドライブ', hint: '縦回転で急降下。高めに狙え', speed: 1.12, curve: 0.6, drag: 1, trail: 0x67e8f9 },
   { id: 'cannon', icon: '🔥', name: 'キャノン', hint: '剛速球。カーブは弱まる', speed: 1.45, curve: 0.35, drag: 0.75, trail: 0xfb923c },
+  { id: 'boomerang', icon: '🪃', name: 'ブーメラン', hint: '後半に一気に曲がる。外から巻け', speed: 1, curve: 3.2, drag: 1, trail: 0xf9a8d4 },
   { id: 'ghost', icon: '👻', name: 'ゴースト', hint: '壁をすり抜ける。キーパーは別', speed: 1, curve: 1, drag: 1, trail: 0xa7f3d0 },
 ];
 

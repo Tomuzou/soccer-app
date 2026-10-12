@@ -170,7 +170,7 @@ export default function App() {
         toggleMuted();
       } else if (e.key === 't' || e.key === 'T') {
         toggleTrail();
-      } else if (/^[1-5]$/.test(e.key)) {
+      } else if (/^[1-6]$/.test(e.key)) {
         game.setItem(SKILL_BALLS[Number(e.key) - 1].id);
       }
     };
@@ -445,7 +445,7 @@ export default function App() {
           </div>
           <p className="instructions">
             👆 手前にドラッグ→離してキック
-            <span className="kbd-hint"> ・ ←→ カーブ ・ 1-5 球質 ・ R 蹴り直し</span>
+            <span className="kbd-hint"> ・ ←→ カーブ ・ 1-6 球質 ・ R 蹴り直し</span>
           </p>
         </div>
       )}

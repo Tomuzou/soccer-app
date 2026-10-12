@@ -8,7 +8,7 @@ export type GameMode = 'free' | 'stage';
 export type StageSet = 'a' | 'b' | 'c' | 'd';
 
 /** スキルボール（キック前に選ぶ球質。定義は game/items.ts） */
-export type ItemId = 'normal' | 'knuckle' | 'drive' | 'cannon' | 'ghost';
+export type ItemId = 'normal' | 'knuckle' | 'drive' | 'cannon' | 'ghost' | 'boomerang';
 
 /** シュート結果（'fail'=制限球を使い切ってステージ失敗） */
 export type ShotResult = 'goal' | 'miss' | 'fail' | null;

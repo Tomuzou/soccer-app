@@ -57,6 +57,11 @@ const DRIVE_TOPSPIN = 55;
 /** ナックルの揺れ加速度（m/s²）横・縦 */
 const KNUCKLE_ACC_X = 12;
 const KNUCKLE_ACC_Y = 7;
+/** ブーメラン：マグヌス力を序盤は弱く、この秒数かけて最大まで強める（遅れて鋭く曲がる） */
+const BOOMERANG_RAMP_TIME = 0.6;
+/** ブーメランのマグヌス倍率（序盤→最大） */
+const BOOMERANG_MAGNUS_MIN = 0.25;
+const BOOMERANG_MAGNUS_MAX = 1.5;
 /** 弾道ラインの最大点数（固定バッファを使い回す） */
 const TRAIL_POINTS = 360;
 
@@ -1309,6 +1314,8 @@ export class Game {
   setItem(id: ItemId): void {
     if (this.state.mode === null || this.state.phase !== 'aiming' || this.state.stageCleared) return;
     this.state.item = id;
+    // カーブ0のままでは曲がらないので、ブーメランを選んだら右巻きを初期設定する
+    if (id === 'boomerang' && Math.abs(this.state.curve) < 0.05) this.state.curve = 0.6;
     this.applyItemLook();
     this.emitState();
   }
@@ -1810,9 +1817,14 @@ export class Game {
     if (relSpeed > 0.01) {
       const fd = -DRAG_K * ball.drag * relSpeed;
       const w = this.ballBody.angularVelocity;
-      f.x = fd * relX + MAGNUS_COEF * (w.y * relZ - w.z * relY);
-      f.y = fd * relY + MAGNUS_COEF * (w.z * relX - w.x * relZ);
-      f.z = fd * relZ + MAGNUS_COEF * (w.x * relY - w.y * relX);
+      let magnus = MAGNUS_COEF;
+      if (ball.id === 'boomerang') {
+        const k = Math.min(1, this.flightTime / BOOMERANG_RAMP_TIME);
+        magnus *= BOOMERANG_MAGNUS_MIN + (BOOMERANG_MAGNUS_MAX - BOOMERANG_MAGNUS_MIN) * k * k;
+      }
+      f.x = fd * relX + magnus * (w.y * relZ - w.z * relY);
+      f.y = fd * relY + magnus * (w.z * relX - w.x * relZ);
+      f.z = fd * relZ + magnus * (w.x * relY - w.y * relX);
     }
     // ナックル：2つの周波数を重ねた揺れ。空中で速いあいだだけ効き、失速・接地で消える
     if (ball.id === 'knuckle' && this.ballBody.position.y > BALL_RADIUS + 0.05) {
