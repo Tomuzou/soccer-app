@@ -25,13 +25,11 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
-      - run: npm run verify:archives
+      # TOMZO ARCADE へ移転済み：旧URLを /tomzo-arcade/free-kick/ へ転送するページだけを公開する
+      - run: node scripts/redirect-site.mjs
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: redirect
 
   deploy:
     needs: build

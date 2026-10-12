@@ -1,5 +1,7 @@
 # FREE KICK LAB — ver.g.1
 
+> **移転しました**：FREE KICK LAB はミニゲーム集 **[TOMZO ARCADE](https://tomuzou.github.io/tomzo-arcade/)** に移りました（リポジトリ [Tomuzou/tomzo-arcade](https://github.com/Tomuzou/tomzo-arcade) の `games/free-kick/`）。旧URL `/soccer-app/…` は同じパスの `/tomzo-arcade/free-kick/…` へ自動転送されます。このリポジトリは開発履歴と ver.c.4 のソース（`claude-c4` ブランチ）の保管用です。
+
 ブラウザで遊べる3Dフリーキックゲーム。React・Three.js・Cannon-esで、狙い、カーブ、空気抵抗、風、キーパーとの駆け引きを楽しめます。
 
 **[最新版で遊ぶ](https://tomuzou.github.io/soccer-app/)**

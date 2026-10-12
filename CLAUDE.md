@@ -1,5 +1,7 @@
 # FREE KICK LAB（Soccer Free Kick 3D）— CLAUDE.md
 
+> **移転済み**：開発は `Tomuzou/tomzo-arcade` の `games/free-kick/` で続ける。このリポジトリの GitHub Pages は `scripts/redirect-site.mjs` が生成する転送ページ（`/soccer-app/<path>` → `/tomzo-arcade/free-kick/<path>`）だけを公開する。以下の内容は移転前の記録。ver.c.4 のソースはこのリポジトリの `claude-c4` ブランチ。
+
 共通仕様はこのファイルで管理する。Codex 用の `AGENTS.md` はこのファイルを読むための入口。
 
 ブラウザで動作する3Dフリーキックゲーム。Three.js で3Dシーンを描画し、Cannon-es で物理シミュレーションを行う。
